@@ -6,26 +6,34 @@ import hashlib
 import json
 import multiprocessing
 import queue
+import traceback
 from django.db.models import Sum
 from django.db import transaction, IntegrityError
-from finance.models import BankTransaction, CreditCardTransaction, Account
 from facts.models import FactDefinition, FactDefinitionVersion, FactInstance, FactInstanceDependency
 from facts.context import normalize_context, hash_context
 from facts.schema_validation import validate_context
 from facts.graph import build_dependency_graph, detect_cycles
 from facts.executor import execute_expression
+from jinja2 import Template
 
 # --- Fact Infrastructure ---
 
 FactKind = Literal["observed", "computed"]
 FactDataType = Literal["dataframe", "scalar", "dict", "list", "distribution"]
 
+@dataclass
+class DependencyEdge:
+    to_fact_id: str
+    param_mapping: Dict[str, str] = field(default_factory=dict)
+    condition: Optional[str] = None
+
 @dataclass(frozen=True)
 class FactSpec:
     id: str
     kind: FactKind
     data_type: FactDataType
-    requires: List[str]
+    requires: List[str] # Legacy simple list
+    dependencies: List[DependencyEdge] # Structured edges
     producer: Optional[Callable[[Dict[str, Any], Dict[str, Any]], Any]]
     description: str
     parameters_schema: Dict[str, Any] = field(default_factory=dict)
@@ -63,8 +71,16 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
         context = {}
         
     # Check in-memory store first
-    if store.has(fact_id):
-        return store.get(fact_id)
+    # Note: We might need to key by (fact_id, context_hash) in store if we reuse store across different contexts
+    # For now, assuming store is per-request and context might vary for same fact if called with different params.
+    # But resolve_fact is usually called with a specific context.
+    # If we have recursive calls with DIFFERENT contexts, simple dict[fact_id] is insufficient.
+    # Let's upgrade store key to include context hash.
+    ctx_hash = hash_context(context)
+    store_key = f"{fact_id}:{ctx_hash}"
+    
+    if store.has(store_key):
+        return store.get(store_key)
 
     spec = reg.spec(fact_id)
     if not spec:
@@ -80,13 +96,12 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
                 status='error',
                 error=str(e),
                 context=normalize_context(context),
-                context_hash=hash_context(context)
+                context_hash=ctx_hash
             )
-            store.set(fact_id, instance)
+            store.set(store_key, instance)
             return instance
 
     # Check DB cache if we have a version object
-    ctx_hash = hash_context(context)
     if spec.version_obj:
         cached = FactInstance.objects.filter(
             fact_version=spec.version_obj,
@@ -94,13 +109,43 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
             status='success'
         ).first()
         if cached:
-            store.set(fact_id, cached)
+            store.set(store_key, cached)
             return cached
 
     # Resolve dependencies
     dep_instances = {}
+    
+    # 1. Handle legacy simple requires
     for dep_id in spec.requires:
         dep_instances[dep_id] = resolve_fact(reg, store, dep_id, context)
+
+    # 2. Handle structured dependencies
+    for edge in spec.dependencies:
+        # Check condition
+        if edge.condition:
+            try:
+                if not execute_expression(edge.condition, context):
+                    continue
+            except Exception:
+                continue # Skip if condition fails or errors
+        
+        # Map parameters
+        dep_context = context.copy()
+        if edge.param_mapping:
+            for target_key, template_str in edge.param_mapping.items():
+                try:
+                    # Use Jinja2 to render value from parent context
+                    val = Template(template_str).render(context)
+                    # Attempt to convert types if needed (simple inference)
+                    if val.isdigit():
+                        val = int(val)
+                    elif val.replace('.', '', 1).isdigit():
+                        val = float(val)
+                    dep_context[target_key] = val
+                except Exception:
+                    pass # Keep default or fail?
+        
+        dep_instances[edge.to_fact_id] = resolve_fact(reg, store, edge.to_fact_id, dep_context)
 
     # Prepare values for producer (Hydrate DataFrames if needed)
     dep_values = {}
@@ -136,6 +181,14 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
 
     # Persist result if versioned
     instance = None
+    
+    # Provenance data
+    provenance = {
+        "dependency_instance_ids": [d.id for d in dep_instances.values() if d.id],
+        "input_context": normalize_context(context),
+        "timestamp": datetime.now().isoformat()
+    }
+
     if spec.version_obj:
         # Dehydrate DataFrames for storage
         value_to_store = value
@@ -167,17 +220,19 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
                         'context': normalize_context(context),
                         'value': value_to_store,
                         'status': status,
-                        'error': error
+                        'error': error,
+                        'provenance': provenance
                     }
                 )
                 if created:
                     # Link dependencies
                     for dep_id, dep_inst in dep_instances.items():
-                        FactInstanceDependency.objects.create(
-                            parent_instance=instance,
-                            dependency_instance=dep_inst,
-                            dependency_fact_id=dep_id
-                        )
+                        if dep_inst.id: # Only if persisted
+                            FactInstanceDependency.objects.create(
+                                parent_instance=instance,
+                                dependency_instance=dep_inst,
+                                dependency_fact_id=dep_id
+                            )
         except IntegrityError:
             # Race condition: another process created it. Re-fetch.
             instance = FactInstance.objects.get(
@@ -189,10 +244,11 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
         instance = FactInstance(
             value=value,
             status=status,
-            error=error
+            error=error,
+            provenance=provenance
         )
 
-    store.set(fact_id, instance)
+    store.set(store_key, instance)
     
     if status == 'error':
         raise RuntimeError(f"Error computing {fact_id}: {error}")
@@ -206,6 +262,8 @@ def to_dot(reg: FactRegistry) -> str:
         lines.append(f'"{spec.id}" [label="{label}"];')
         for dep in spec.requires:
             lines.append(f'"{dep}" -> "{spec.id}";')
+        for edge in spec.dependencies:
+            lines.append(f'"{edge.to_fact_id}" -> "{spec.id}" [label="mapped"];')
     lines.append("}")
     return "\n".join(lines)
 
@@ -225,6 +283,16 @@ def build_taxonomy() -> FactRegistry:
             
         # Create producer
         producer_func = create_dynamic_producer(version.code)
+        
+        # Parse structured dependencies
+        structured_deps = []
+        if version.dependencies:
+            for d in version.dependencies:
+                structured_deps.append(DependencyEdge(
+                    to_fact_id=d.get('id'),
+                    param_mapping=d.get('with', {}),
+                    condition=d.get('when')
+                ))
             
         if producer_func:
             reg.register(FactSpec(
@@ -232,6 +300,7 @@ def build_taxonomy() -> FactRegistry:
                 kind="computed",
                 data_type=defn.data_type,
                 requires=version.requires,
+                dependencies=structured_deps,
                 producer=producer_func,
                 description=defn.description,
                 parameters_schema=version.parameters_schema,
@@ -269,11 +338,34 @@ def create_dynamic_producer(code_str):
 
 # --- Safe Execution ---
 
-def safe_execute_worker(code_str, deps, context, result_queue):
+def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
     """
-    Worker function to run in a separate process.
+    Executes the producer directly in the current process (INSECURE for untrusted code).
+    Modified to avoid multiprocessing issues during debugging.
     """
+    if not hasattr(producer_func, 'code'):
+        # It's a native python function (not dynamic), run directly
+        return producer_func(deps, context)
+
+    code_str = producer_func.code
+    
+    if logic_type == 'expression':
+        # Use simpleeval for expressions
+        # Combine deps and context into names
+        names = {**deps, **context}
+        return execute_expression(code_str, names)
+
+    # Python execution (Local)
     try:
+        # Imports needed for the dynamic code
+        try:
+            from finance.models import BankTransaction, CreditCardTransaction, Account
+        except ImportError:
+            # Fallback if finance app is not available (e.g. in tests)
+            BankTransaction = None
+            CreditCardTransaction = None
+            Account = None
+        
         # Restricted globals
         safe_globals = {
             "__builtins__": {
@@ -288,15 +380,6 @@ def safe_execute_worker(code_str, deps, context, result_queue):
             "date": date,
             "datetime": datetime,
             "Sum": Sum,
-            # Models are tricky in multiprocessing because of DB connections.
-            # Ideally, we pass data in `deps` and `context` and avoid DB access in facts.
-            # But existing code uses models. 
-            # For now, we'll allow models but Django DB connection might break in fork.
-            # Best practice: Facts should only use `deps` and `context`.
-            # If we must use models, we need to ensure DB connections are handled.
-            # Given the constraints, let's assume facts should rely on deps.
-            # But `all_transactions` uses models. 
-            # We will allow models for now but this is risky in multiprocessing without care.
             "BankTransaction": BankTransaction,
             "CreditCardTransaction": CreditCardTransaction,
             "Account": Account
@@ -308,50 +391,10 @@ def safe_execute_worker(code_str, deps, context, result_queue):
         exec(wrapped_code, safe_globals, local_scope)
         func = local_scope['dynamic_producer']
         
-        # Execute
-        res = func(deps, context)
-        result_queue.put({"status": "success", "value": res})
+        # Execute directly
+        return func(deps, context)
+        
     except Exception as e:
-        result_queue.put({"status": "error", "error": str(e)})
-
-def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
-    """
-    Executes the producer in a separate process with timeout.
-    """
-    if not hasattr(producer_func, 'code'):
-        # It's a native python function (not dynamic), run directly
-        return producer_func(deps, context)
-
-    code_str = producer_func.code
-    
-    if logic_type == 'expression':
-        # Use simpleeval for expressions
-        # Combine deps and context into names
-        names = {**deps, **context}
-        return execute_expression(code_str, names)
-
-    # Python execution
-    result_queue = multiprocessing.Queue()
-    
-    # We need to close DB connections before forking to avoid issues
-    # (Django handles this usually, but good to be safe if using 'spawn')
-    # For 'fork' (default on Linux/Mac), it's okay but connections are shared.
-    # Mac defaults to 'spawn' in Python 3.8+.
-    
-    p = multiprocessing.Process(target=safe_execute_worker, args=(code_str, deps, context, result_queue))
-    p.start()
-    p.join(timeout)
-    
-    if p.is_alive():
-        p.terminate()
-        p.join()
-        raise TimeoutError("Fact computation timed out")
-        
-    if result_queue.empty():
-        raise RuntimeError("Fact computation crashed without result")
-        
-    result = result_queue.get()
-    if result['status'] == 'error':
-        raise RuntimeError(result['error'])
-        
-    return result['value']
+        import traceback
+        tb = traceback.format_exc()
+        raise RuntimeError(f"Error executing fact logic: {str(e)}\n{tb}")

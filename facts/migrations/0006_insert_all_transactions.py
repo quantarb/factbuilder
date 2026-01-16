@@ -50,7 +50,7 @@ def insert_all_transactions(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('facts', '0005_factdefinitionversion_test_cases'),
+        ('facts', '0001_initial'),
     ]
 
     operations = [

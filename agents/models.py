@@ -3,6 +3,7 @@ from facts.models import FactDefinition, FactDefinitionVersion
 from facts.taxonomy import create_dynamic_producer, safe_execute
 from facts.schema_validation import validate_schema_definition
 from simple_history.models import HistoricalRecords
+import re
 
 class TaxonomyProposal(models.Model):
     """
@@ -57,6 +58,28 @@ class TaxonomyProposal(models.Model):
             
         self.approval_error = ""
         
+        # 0. Auto-detect dependencies if missing
+        if not self.proposed_requires:
+            # Simple heuristic: look for deps['fact_id'] or names in expression
+            # This is a fallback if LLM didn't populate it
+            potential_deps = set()
+            if self.proposed_logic_type == 'python':
+                matches = re.findall(r"deps\['([a-zA-Z0-9_]+)'\]", self.proposed_logic)
+                potential_deps.update(matches)
+            elif self.proposed_logic_type == 'expression':
+                # In expression, any variable name could be a dependency
+                # We can't easily parse it without a parser, but we can check against known facts
+                known_facts = set(FactDefinition.objects.values_list('id', flat=True))
+                # Split by non-alphanumeric
+                tokens = re.findall(r"[a-zA-Z0-9_]+", self.proposed_logic)
+                for token in tokens:
+                    if token in known_facts:
+                        potential_deps.add(token)
+            
+            if potential_deps:
+                self.proposed_requires = list(potential_deps)
+                self.save()
+
         # 1. Validate Requires
         existing_ids = set(FactDefinition.objects.values_list('id', flat=True))
         for req in self.proposed_requires:
