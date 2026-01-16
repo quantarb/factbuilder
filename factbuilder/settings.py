@@ -130,3 +130,7 @@ STATIC_URL = 'static/'
 
 # OpenAI API Key
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# Auth Redirects
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/'

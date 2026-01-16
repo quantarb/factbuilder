@@ -15,6 +15,7 @@ from facts.schema_validation import validate_context
 from facts.graph import build_dependency_graph, detect_cycles
 from facts.executor import execute_expression
 from jinja2 import Template
+from decimal import Decimal
 
 # --- Fact Infrastructure ---
 
@@ -377,6 +378,7 @@ def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
                 "print": print, # Optional, maybe redirect stdout
             },
             "pd": pd, # Whitelisted pandas
+            "Decimal": Decimal,
             "date": date,
             "datetime": datetime,
             "Sum": Sum,

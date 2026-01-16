@@ -5,9 +5,10 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from finance.models import Account, BankTransaction, CreditCardTransaction
 from facts.engine import QAEngine
-from facts.models import FactDefinition, FactDefinitionVersion
+from facts.models import FactDefinition, FactDefinitionVersion, IntentRecognizer
 import pandas as pd
 from django.db.models import Sum
+from decimal import Decimal
 
 class Command(BaseCommand):
     help = 'Sets up initial data: users, accounts, transactions, and facts.'
@@ -31,6 +32,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"File not found: {credit_card_csv_path}"))
         
         self.setup_initial_facts()
+        self.setup_level0_facts()
         self.run_initial_questions(admin_user)
 
     def create_superuser(self):
@@ -252,15 +254,113 @@ return abs(spent)
 
         self.stdout.write(self.style.SUCCESS(f"Ensured {len(facts)} initial facts exist."))
 
+    def setup_level0_facts(self):
+        self.stdout.write("Setting up Level 0 Facts & Intents...")
+
+        # 1. money.cash_balance
+        cash_balance_code = """
+user = context.get('user')
+if not user:
+    return {'error': 'No user context'}
+
+accounts = Account.objects.filter(user=user)
+total = Decimal('0.00')
+
+for acc in accounts:
+    # Get latest transaction with non-null balance
+    tx = BankTransaction.objects.filter(account=acc, balance__isnull=False).order_by('-posting_date', '-id').first()
+    if tx:
+        # balance is float in DB, convert to string first for Decimal safety
+        total += Decimal(str(tx.balance))
+
+return {
+    "cash_balance": float(total),
+    "currency": "USD"
+}
+"""
+        self._create_fact_with_intent(
+            id="money.cash_balance",
+            desc="Current total cash balance across all accounts",
+            code=cash_balance_code,
+            data_type="dict",
+            regex_patterns=[r"what is my (current )?cash balance\??"],
+            keywords=["cash", "balance"]
+        )
+
+        # 2. money.cash_balance_breakdown
+        breakdown_code = """
+user = context.get('user')
+if not user:
+    return {'error': 'No user context'}
+
+accounts = Account.objects.filter(user=user)
+breakdown = []
+total = Decimal('0.00')
+
+for acc in accounts:
+    tx = BankTransaction.objects.filter(account=acc, balance__isnull=False).order_by('-posting_date', '-id').first()
+    
+    acc_info = {
+        "account_id": acc.id,
+        "account_name": acc.name,
+        "latest_balance": 0.0,
+        "latest_transaction_id": None,
+        "posted_at": None,
+        "description": None
+    }
+    
+    if tx:
+        bal = Decimal(str(tx.balance))
+        total += bal
+        acc_info.update({
+            "latest_balance": float(bal),
+            "latest_transaction_id": tx.id,
+            "posted_at": tx.posting_date.isoformat(),
+            "description": tx.description
+        })
+    
+    breakdown.append(acc_info)
+
+return {
+    "total_cash_balance": float(total),
+    "currency": "USD",
+    "accounts": breakdown,
+    "provenance_note": "Derived from latest transaction per account"
+}
+"""
+        self._create_fact_with_intent(
+            id="money.cash_balance_breakdown",
+            desc="Breakdown of cash balance by account with provenance",
+            code=breakdown_code,
+            data_type="dict",
+            regex_patterns=[r"where did this number come from\??"],
+            keywords=["provenance", "breakdown", "source"]
+        )
+
+    def _create_fact_with_intent(self, id, desc, code, data_type, regex_patterns, keywords):
+        defn, _ = FactDefinition.objects.get_or_create(
+            id=id,
+            defaults={'description': desc, 'data_type': data_type}
+        )
+        
+        ver, _ = FactDefinitionVersion.objects.update_or_create(
+            fact_definition=defn,
+            version=1,
+            defaults={'code': code.strip(), 'status': 'approved', 'change_note': 'Level 0 Setup'}
+        )
+        
+        IntentRecognizer.objects.update_or_create(
+            fact_version=ver,
+            defaults={'regex_patterns': regex_patterns, 'keywords': keywords}
+        )
+
     def run_initial_questions(self, user):
         self.stdout.write("\n--- Running Initial QA to Build Taxonomy Facts ---")
         engine = QAEngine()
         
         questions = [
-            "What is the current balance of Chase Checking?",
-            "How much did I spend on 2026-01-02?",
-            "How much did I spend on 2025-12-31?",
-            "What is my spending by category?",
+            "What is my current cash balance?",
+            "Where did this number come from?",
         ]
         
         for q_text in questions:

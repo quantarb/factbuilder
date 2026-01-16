@@ -75,9 +75,9 @@ class GraphTests(TestCase):
     def test_cycle_detection(self):
         reg = FactRegistry()
         # A -> B -> C -> A
-        reg.register(FactSpec(id="A", kind="computed", data_type="scalar", requires=["B"], producer=lambda d, c: None, description=""))
-        reg.register(FactSpec(id="B", kind="computed", data_type="scalar", requires=["C"], producer=lambda d, c: None, description=""))
-        reg.register(FactSpec(id="C", kind="computed", data_type="scalar", requires=["A"], producer=lambda d, c: None, description=""))
+        reg.register(FactSpec(id="A", kind="computed", data_type="scalar", requires=["B"], dependencies=[], producer=lambda d, c: None, description=""))
+        reg.register(FactSpec(id="B", kind="computed", data_type="scalar", requires=["C"], dependencies=[], producer=lambda d, c: None, description=""))
+        reg.register(FactSpec(id="C", kind="computed", data_type="scalar", requires=["A"], dependencies=[], producer=lambda d, c: None, description=""))
         
         graph = build_dependency_graph(reg)
         cycles = detect_cycles(graph)
@@ -86,8 +86,8 @@ class GraphTests(TestCase):
     def test_no_cycle(self):
         reg = FactRegistry()
         # A -> B
-        reg.register(FactSpec(id="A", kind="computed", data_type="scalar", requires=["B"], producer=lambda d, c: None, description=""))
-        reg.register(FactSpec(id="B", kind="computed", data_type="scalar", requires=[], producer=lambda d, c: None, description=""))
+        reg.register(FactSpec(id="A", kind="computed", data_type="scalar", requires=["B"], dependencies=[], producer=lambda d, c: None, description=""))
+        reg.register(FactSpec(id="B", kind="computed", data_type="scalar", requires=[], dependencies=[], producer=lambda d, c: None, description=""))
         
         graph = build_dependency_graph(reg)
         cycles = detect_cycles(graph)
