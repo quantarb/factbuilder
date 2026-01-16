@@ -1,0 +1,9 @@
+Django>=5.0
+pandas
+jinja2
+pydantic
+jsonschema
+networkx
+django-simple-history
+simpleeval
+django-redis

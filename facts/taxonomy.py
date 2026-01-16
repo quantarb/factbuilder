@@ -10,6 +10,10 @@ from django.db.models import Sum
 from django.db import transaction, IntegrityError
 from finance.models import BankTransaction, CreditCardTransaction, Account
 from facts.models import FactDefinition, FactDefinitionVersion, FactInstance, FactInstanceDependency
+from facts.context import normalize_context, hash_context
+from facts.schema_validation import validate_context
+from facts.graph import build_dependency_graph, detect_cycles
+from facts.executor import execute_expression
 
 # --- Fact Infrastructure ---
 
@@ -54,36 +58,6 @@ class FactStore:
     def has(self, fact_id: str) -> bool:
         return fact_id in self._instances
 
-def normalize_context(context: Any) -> Any:
-    """
-    Normalize context for hashing recursively:
-    - Sort keys
-    - Remove transient keys (user object, session IDs)
-    - Convert dates to ISO strings
-    - Normalize lists/tuples
-    """
-    if isinstance(context, dict):
-        clean_ctx = {}
-        for k, v in context.items():
-            if k in ['user', 'request', 'session_id']:
-                continue
-            clean_ctx[k] = normalize_context(v)
-        return clean_ctx
-    elif isinstance(context, (list, tuple)):
-        return [normalize_context(x) for x in context]
-    elif isinstance(context, (date, datetime)):
-        return context.isoformat()
-    elif isinstance(context, float):
-        return float(context) # Ensure float
-    else:
-        return context
-
-def hash_context(context: Dict[str, Any]) -> str:
-    """SHA256 hash of normalized context."""
-    norm = normalize_context(context)
-    s = json.dumps(norm, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
-    return hashlib.sha256(s.encode('utf-8')).hexdigest()
-
 def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dict[str, Any] = None) -> FactInstance:
     if context is None:
         context = {}
@@ -95,6 +69,21 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
     spec = reg.spec(fact_id)
     if not spec:
         raise ValueError(f"Fact {fact_id} not registered")
+
+    # Validate context against schema if available
+    if spec.parameters_schema:
+        try:
+            validate_context(context, spec.parameters_schema)
+        except ValueError as e:
+            # Create error instance
+            instance = FactInstance(
+                status='error',
+                error=str(e),
+                context=normalize_context(context),
+                context_hash=hash_context(context)
+            )
+            store.set(fact_id, instance)
+            return instance
 
     # Check DB cache if we have a version object
     ctx_hash = hash_context(context)
@@ -134,7 +123,7 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
         
         # Use safe execution if it's a dynamic producer (from DB)
         if spec.version_obj:
-            value = safe_execute(spec.producer, dep_values, context)
+            value = safe_execute(spec.producer, dep_values, context, spec.version_obj.logic_type)
         else:
             value = spec.producer(dep_values, context)
             
@@ -250,6 +239,12 @@ def build_taxonomy() -> FactRegistry:
                 version_obj=version
             ))
 
+    # Cycle detection
+    graph = build_dependency_graph(reg)
+    cycles = detect_cycles(graph)
+    if cycles:
+        raise ValueError(f"Cycle detected in fact dependencies: {cycles}")
+
     return reg
 
 def create_dynamic_producer(code_str):
@@ -319,7 +314,7 @@ def safe_execute_worker(code_str, deps, context, result_queue):
     except Exception as e:
         result_queue.put({"status": "error", "error": str(e)})
 
-def safe_execute(producer_func, deps, context, timeout=5):
+def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
     """
     Executes the producer in a separate process with timeout.
     """
@@ -328,6 +323,14 @@ def safe_execute(producer_func, deps, context, timeout=5):
         return producer_func(deps, context)
 
     code_str = producer_func.code
+    
+    if logic_type == 'expression':
+        # Use simpleeval for expressions
+        # Combine deps and context into names
+        names = {**deps, **context}
+        return execute_expression(code_str, names)
+
+    # Python execution
     result_queue = multiprocessing.Queue()
     
     # We need to close DB connections before forking to avoid issues

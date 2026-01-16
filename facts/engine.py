@@ -2,6 +2,7 @@ import re
 from typing import Any, Dict, Optional
 from .taxonomy import build_taxonomy, resolve_fact, FactStore
 from .models import Question, Answer, FactInstance
+from .context import normalize_context
 import json
 from jinja2 import Template
 
@@ -111,7 +112,9 @@ class QAEngine:
             try:
                 # Render template with value and context
                 # We flatten context into the root namespace for easier access in template
-                render_ctx = {"value": value, **context}
+                # Also normalize context for consistent rendering
+                norm_ctx = normalize_context(context)
+                render_ctx = {"value": value, **norm_ctx}
                 return Template(spec.output_template).render(render_ctx)
             except Exception as e:
                 print(f"Template rendering failed: {e}")

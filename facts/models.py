@@ -3,6 +3,7 @@ import json
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.serializers.json import DjangoJSONEncoder
+from simple_history.models import HistoricalRecords
 
 class FactDefinition(models.Model):
     """
@@ -25,6 +26,7 @@ class FactDefinition(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     def __str__(self):
         return self.id
@@ -39,17 +41,24 @@ class FactDefinitionVersion(models.Model):
         ('deprecated', 'Deprecated'),
     ]
     
+    LOGIC_TYPE_CHOICES = [
+        ('python', 'Python'),
+        ('expression', 'Expression (SimpleEval)'),
+    ]
+    
     fact_definition = models.ForeignKey(FactDefinition, on_delete=models.CASCADE, related_name='versions')
     version = models.IntegerField()
     requires = models.JSONField(default=list) # list of fact ids
     parameters_schema = models.JSONField(default=dict, blank=True)
     output_template = models.TextField(blank=True, null=True)
+    logic_type = models.CharField(max_length=20, choices=LOGIC_TYPE_CHOICES, default='python')
     code = models.TextField(help_text="Python code or DSL")
     test_cases = models.JSONField(default=list, blank=True, help_text="List of {context, expected} for validation")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     change_note = models.TextField(blank=True)
+    history = HistoricalRecords()
     
     class Meta:
         unique_together = ('fact_definition', 'version')

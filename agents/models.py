@@ -1,6 +1,8 @@
 from django.db import models
 from facts.models import FactDefinition, FactDefinitionVersion
 from facts.taxonomy import create_dynamic_producer, safe_execute
+from facts.schema_validation import validate_schema_definition
+from simple_history.models import HistoricalRecords
 
 class TaxonomyProposal(models.Model):
     """
@@ -22,6 +24,13 @@ class TaxonomyProposal(models.Model):
         default=FactDefinition.FactValueType.SCALAR
     )
     proposed_requires = models.JSONField(default=list)
+    
+    LOGIC_TYPE_CHOICES = [
+        ('python', 'Python'),
+        ('expression', 'Expression (SimpleEval)'),
+    ]
+    proposed_logic_type = models.CharField(max_length=20, choices=LOGIC_TYPE_CHOICES, default='python')
+    
     test_cases = models.JSONField(default=list, blank=True, help_text="List of {context, expected_type, expected_contains}")
     approval_error = models.TextField(blank=True, null=True)
 
@@ -34,6 +43,7 @@ class TaxonomyProposal(models.Model):
     
     # Link to the created version if approved
     created_version = models.ForeignKey(FactDefinitionVersion, on_delete=models.SET_NULL, null=True, blank=True)
+    history = HistoricalRecords()
 
     def __str__(self):
         return f"Proposal for: {self.question[:50]}..."
@@ -61,7 +71,16 @@ class TaxonomyProposal(models.Model):
              self.save()
              return
 
-        # 3. Run Tests
+        # 3. Validate Schema
+        if self.proposed_schema:
+            try:
+                validate_schema_definition(self.proposed_schema)
+            except ValueError as e:
+                self.approval_error = f"Invalid schema: {str(e)}"
+                self.save()
+                return
+
+        # 4. Run Tests
         if self.test_cases:
             producer = create_dynamic_producer(self.proposed_logic)
             for i, test in enumerate(self.test_cases):
@@ -74,7 +93,7 @@ class TaxonomyProposal(models.Model):
                 deps = test.get('deps', {})
                 
                 try:
-                    result = safe_execute(producer, deps, ctx, timeout=3)
+                    result = safe_execute(producer, deps, ctx, logic_type=self.proposed_logic_type, timeout=3)
                     
                     # Validate result
                     expected_type = test.get('expected_type')
@@ -92,7 +111,7 @@ class TaxonomyProposal(models.Model):
                     self.save()
                     return
 
-        # 4. Create or Get Definition
+        # 5. Create or Get Definition
         defn, created = FactDefinition.objects.get_or_create(
             id=self.proposed_fact_id,
             defaults={
@@ -107,11 +126,11 @@ class TaxonomyProposal(models.Model):
              # For now, we assume the proposal is correct for the new version.
              pass
 
-        # 5. Determine next version number
+        # 6. Determine next version number
         last_version = defn.versions.order_by('-version').first()
         next_ver = (last_version.version + 1) if last_version else 1
         
-        # 6. Create Version
+        # 7. Create Version
         version = FactDefinitionVersion.objects.create(
             fact_definition=defn,
             version=next_ver,
@@ -119,6 +138,7 @@ class TaxonomyProposal(models.Model):
             requires=self.proposed_requires,
             parameters_schema=self.proposed_schema,
             output_template=self.proposed_template,
+            logic_type=self.proposed_logic_type,
             test_cases=self.test_cases,
             status='approved',
             created_by=user,
