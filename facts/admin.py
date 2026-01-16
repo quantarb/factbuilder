@@ -1,14 +1,22 @@
 from django.contrib import admin
-from .models import FactType, Fact, Question, Answer
+from .models import FactDefinition, FactDefinitionVersion, FactInstance, Question, Answer
 
-@admin.register(FactType)
-class FactTypeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'description')
+@admin.register(FactDefinition)
+class FactDefinitionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'description', 'is_active', 'updated_at')
+    search_fields = ('id', 'description')
 
-@admin.register(Fact)
-class FactAdmin(admin.ModelAdmin):
-    list_display = ('fact_type', 'value', 'created_at')
-    list_filter = ('fact_type',)
+@admin.register(FactDefinitionVersion)
+class FactDefinitionVersionAdmin(admin.ModelAdmin):
+    list_display = ('fact_definition', 'version', 'status', 'created_at')
+    list_filter = ('status', 'fact_definition')
+    ordering = ('-created_at',)
+
+@admin.register(FactInstance)
+class FactInstanceAdmin(admin.ModelAdmin):
+    list_display = ('fact_version', 'status', 'computed_at')
+    list_filter = ('status', 'fact_version__fact_definition')
+    readonly_fields = ('context_hash', 'computed_at')
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):

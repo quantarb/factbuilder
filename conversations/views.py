@@ -6,7 +6,6 @@ from .models import Conversation, Message
 from facts.engine import QAEngine
 from facts.taxonomy import build_taxonomy, to_dot
 from agents.models import TaxonomyProposal
-from facts.models import DynamicFact
 import json
 
 @login_required
@@ -95,22 +94,8 @@ def approve_proposal(request):
             if proposal.status != 'pending':
                 return JsonResponse({'error': 'Proposal already processed'}, status=400)
                 
-            # Create DynamicFact with new fields
-            DynamicFact.objects.create(
-                id=proposal.proposed_fact_id,
-                description=f"Auto-generated for: {proposal.question}",
-                kind="computed",
-                data_type="scalar",
-                requires=["all_transactions"],
-                code=proposal.proposed_logic,
-                # NEW: Save schema and template
-                parameters_schema=proposal.proposed_schema,
-                output_template=proposal.proposed_template,
-                is_active=True
-            )
-            
-            proposal.status = 'approved'
-            proposal.save()
+            # Use the model method to approve and create version
+            proposal.approve(user=request.user)
             
             engine = QAEngine()
             response_data = engine.answer_question(proposal.question, user=request.user)

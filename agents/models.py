@@ -1,4 +1,5 @@
 from django.db import models
+from facts.models import FactDefinition, FactDefinitionVersion
 
 class TaxonomyProposal(models.Model):
     """
@@ -19,9 +20,45 @@ class TaxonomyProposal(models.Model):
         ('approved', 'Approved'),
         ('rejected', 'Rejected')
     ])
+    
+    # Link to the created version if approved
+    created_version = models.ForeignKey(FactDefinitionVersion, on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
         return f"Proposal for: {self.question[:50]}..."
+    
+    def approve(self, user=None):
+        """
+        Promotes this proposal to a real FactDefinitionVersion.
+        """
+        if self.status == 'approved':
+            return
+            
+        # 1. Create or Get Definition
+        defn, created = FactDefinition.objects.get_or_create(
+            id=self.proposed_fact_id,
+            defaults={'description': f"Auto-generated from: {self.question}"}
+        )
+        
+        # 2. Determine next version number
+        last_version = defn.versions.order_by('-version').first()
+        next_ver = (last_version.version + 1) if last_version else 1
+        
+        # 3. Create Version
+        version = FactDefinitionVersion.objects.create(
+            fact_definition=defn,
+            version=next_ver,
+            code=self.proposed_logic,
+            parameters_schema=self.proposed_schema,
+            output_template=self.proposed_template,
+            status='approved',
+            created_by=user,
+            change_note=f"Approved from proposal {self.id}"
+        )
+        
+        self.created_version = version
+        self.status = 'approved'
+        self.save()
 
 class CapabilitySuggestion(models.Model):
     suggested_question = models.TextField()

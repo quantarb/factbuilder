@@ -5,7 +5,7 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from finance.models import Account, BankTransaction, CreditCardTransaction
 from facts.engine import QAEngine
-from facts.models import DynamicFact
+from facts.models import FactDefinition, FactDefinitionVersion
 import pandas as pd
 from django.db.models import Sum
 
@@ -138,13 +138,15 @@ class Command(BaseCommand):
             {
                 "id": "account_transactions",
                 "description": "Transactions filtered by account context",
-                "kind": "computed",
                 "data_type": "dataframe",
                 "requires": ["all_transactions"],
                 "code": """
 df = deps["all_transactions"]
+if isinstance(df, list):
+    df = pd.DataFrame(df)
+    
 account_name = context.get("account_name")
-if account_name:
+if account_name and not df.empty:
     return df[df['account__name'] == account_name]
 return df
 """
@@ -152,7 +154,6 @@ return df
             {
                 "id": "current_balance",
                 "description": "Current balance for an account",
-                "kind": "computed",
                 "data_type": "scalar",
                 "requires": [],
                 "code": """
@@ -177,11 +178,15 @@ return 0.0
             {
                 "id": "spending_by_category",
                 "description": "Total spending grouped by category",
-                "kind": "computed",
                 "data_type": "dict",
                 "requires": ["all_transactions"],
                 "code": """
 df = deps["all_transactions"]
+if isinstance(df, list):
+    df = pd.DataFrame(df)
+    
+if df.empty:
+    return {}
 # Filter for negative amounts (spending)
 spending = df[df['amount'] < 0]
 if spending.empty:
@@ -192,19 +197,25 @@ return spending.groupby('category')['amount'].sum().abs().to_dict()
             {
                 "id": "spending_on_date",
                 "description": "Total spending on a specific date",
-                "kind": "computed",
                 "data_type": "scalar",
                 "requires": ["all_transactions"],
                 "code": """
 df = deps["all_transactions"]
+if isinstance(df, list):
+    df = pd.DataFrame(df)
+
 target_date = context.get("date")
-if not target_date:
+if not target_date or df.empty:
     return 0.0
     
 # Ensure target_date is a date object
 if isinstance(target_date, str):
     target_date = pd.to_datetime(target_date).date()
     
+# Convert date column to date objects if they are strings
+if df['date'].dtype == 'object':
+    df['date'] = pd.to_datetime(df['date']).dt.date
+
 daily_txs = df[df['date'] == target_date]
 # Sum negative amounts
 spent = daily_txs[daily_txs['amount'] < 0]['amount'].sum()
@@ -214,17 +225,31 @@ return abs(spent)
         ]
         
         for f in facts:
-            DynamicFact.objects.get_or_create(
+            defn, _ = FactDefinition.objects.get_or_create(
                 id=f['id'],
                 defaults={
                     'description': f['description'],
-                    'kind': f['kind'],
                     'data_type': f['data_type'],
-                    'requires': f['requires'],
-                    'code': f['code'].strip(),
                     'is_active': True
                 }
             )
+            
+            # Create version if not exists
+            if not defn.versions.exists():
+                FactDefinitionVersion.objects.create(
+                    fact_definition=defn,
+                    version=1,
+                    requires=f['requires'],
+                    code=f['code'].strip(),
+                    status='approved',
+                    change_note="Initial setup"
+                )
+            else:
+                # Update existing version code for development iteration
+                v = defn.versions.first()
+                v.code = f['code'].strip()
+                v.save()
+
         self.stdout.write(self.style.SUCCESS(f"Ensured {len(facts)} initial facts exist."))
 
     def run_initial_questions(self, user):

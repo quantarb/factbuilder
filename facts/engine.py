@@ -1,7 +1,7 @@
 import re
 from typing import Any, Dict, Optional
 from .taxonomy import build_taxonomy, resolve_fact, FactStore
-from .models import Question, Answer, Fact, FactType, DynamicFact
+from .models import Question, Answer, FactInstance
 import json
 from jinja2 import Template
 
@@ -33,9 +33,12 @@ class QAEngine:
             
         store = FactStore()
         try:
-            value = resolve_fact(self.registry, store, intent, context)
+            # resolve_fact now returns a FactInstance
+            fact_instance = resolve_fact(self.registry, store, intent, context)
+            value = fact_instance.value
+            
             answer_text = self._format_answer(intent, value, context)
-            self._save_interaction(question_obj, intent, value, context, answer_text)
+            self._save_interaction(question_obj, fact_instance, answer_text)
             return {"text": answer_text}
             
         except Exception as e:
@@ -136,20 +139,9 @@ class QAEngine:
             
         return str(value)
 
-    def _save_interaction(self, question_obj, fact_id, value, context, answer_text):
-        fact_type, _ = FactType.objects.get_or_create(name=fact_id)
-        fact_val_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
-        context_to_save = context.copy()
-        if 'user' in context_to_save:
-            del context_to_save['user']
-
-        fact_obj = Fact.objects.create(
-            fact_type=fact_type,
-            value=fact_val_str,
-            context=context_to_save
-        )
+    def _save_interaction(self, question_obj, fact_instance, answer_text):
         answer_obj = Answer.objects.create(
             question=question_obj,
             text=answer_text
         )
-        answer_obj.facts_used.add(fact_obj)
+        answer_obj.facts_used.add(fact_instance)

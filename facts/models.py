@@ -1,58 +1,81 @@
+import hashlib
+import json
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.serializers.json import DjangoJSONEncoder
 
-class FactType(models.Model):
+class FactDefinition(models.Model):
     """
-    Defines a category of facts (e.g., 'Current Balance', 'Daily Spending').
+    Represents what a fact is (stable identity).
     """
-    name = models.CharField(max_length=255, unique=True)
+    id = models.CharField(max_length=255, primary_key=True) # snake_case, stable
     description = models.TextField(blank=True)
-    data_type = models.CharField(max_length=50, default='string')
-    required_context = models.JSONField(default=list, blank=True)
-    
-    def __str__(self):
-        return self.name
-
-class DynamicFact(models.Model):
-    """
-    Stores dynamically generated fact definitions and their executable code.
-    """
-    id = models.CharField(max_length=255, primary_key=True)
-    description = models.TextField()
-    kind = models.CharField(max_length=50, default="computed")
-    data_type = models.CharField(max_length=50, default="scalar")
-    requires = models.JSONField(default=list)
-    
-    # The Python code for the producer function
-    code = models.TextField(help_text="Python code defining the producer function.")
-    
-    # NEW: JSON Schema defining what context variables this fact accepts/uses
-    # e.g. {"type": "object", "properties": {"date": {"type": "string"}}, "required": ["date"]}
-    parameters_schema = models.JSONField(default=dict, blank=True, help_text="JSON Schema for context parameters")
-    
-    # NEW: Template for formatting the answer
-    # e.g. "You spent ${value} on {date}."
-    output_template = models.TextField(blank=True, null=True, help_text="Jinja2-style template for the answer string")
-
-    created_at = models.DateTimeField(auto_now_add=True)
+    data_type = models.CharField(max_length=50, default='string') # number, string, bool, object, distribution
     is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.id
 
-class Fact(models.Model):
-    fact_type = models.ForeignKey(FactType, on_delete=models.CASCADE)
-    context = models.JSONField(default=dict, blank=True)
-    value = models.TextField()
+class FactDefinitionVersion(models.Model):
+    """
+    Represents how the fact is computed (versioned logic).
+    """
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('approved', 'Approved'),
+        ('deprecated', 'Deprecated'),
+    ]
+    
+    fact_definition = models.ForeignKey(FactDefinition, on_delete=models.CASCADE, related_name='versions')
+    version = models.IntegerField()
+    requires = models.JSONField(default=list) # list of fact ids
+    parameters_schema = models.JSONField(default=dict, blank=True)
+    output_template = models.TextField(blank=True, null=True)
+    code = models.TextField(help_text="Python code or DSL")
+    test_cases = models.JSONField(default=list, blank=True, help_text="List of {context, expected} for validation")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    change_note = models.TextField(blank=True)
     
     class Meta:
-        indexes = [
-            models.Index(fields=['fact_type', 'created_at']),
-        ]
+        unique_together = ('fact_definition', 'version')
+        ordering = ['-version']
 
     def __str__(self):
-        return f"{self.fact_type.name} {self.context}: {self.value}"
+        return f"{self.fact_definition_id} v{self.version}"
+
+class FactInstance(models.Model):
+    """
+    Reusable cached computation.
+    """
+    STATUS_CHOICES = [
+        ('success', 'Success'),
+        ('error', 'Error'),
+    ]
+    
+    fact_version = models.ForeignKey(FactDefinitionVersion, on_delete=models.CASCADE, related_name='instances')
+    context = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+    context_hash = models.CharField(max_length=64, db_index=True)
+    value = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
+    computed_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='success')
+    error = models.TextField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['fact_version', 'context_hash']),
+        ]
+    
+    def __str__(self):
+        return f"{self.fact_version} ({self.status})"
+
+class FactInstanceDependency(models.Model):
+    parent_instance = models.ForeignKey(FactInstance, on_delete=models.CASCADE, related_name='dependencies')
+    dependency_instance = models.ForeignKey(FactInstance, on_delete=models.CASCADE, related_name='dependents')
+    dependency_fact_id = models.CharField(max_length=255)
 
 class Question(models.Model):
     text = models.TextField()
@@ -65,7 +88,7 @@ class Question(models.Model):
 class Answer(models.Model):
     question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='answers')
     text = models.TextField()
-    facts_used = models.ManyToManyField(Fact, blank=True)
+    facts_used = models.ManyToManyField(FactInstance, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
