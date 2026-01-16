@@ -8,9 +8,20 @@ class FactDefinition(models.Model):
     """
     Represents what a fact is (stable identity).
     """
+    class FactValueType(models.TextChoices):
+        SCALAR = 'scalar', 'Scalar'
+        DICT = 'dict', 'Dict'
+        LIST = 'list', 'List'
+        DATAFRAME = 'dataframe', 'Dataframe'
+        DISTRIBUTION = 'distribution', 'Distribution'
+
     id = models.CharField(max_length=255, primary_key=True) # snake_case, stable
     description = models.TextField(blank=True)
-    data_type = models.CharField(max_length=50, default='string') # number, string, bool, object, distribution
+    data_type = models.CharField(
+        max_length=50, 
+        choices=FactValueType.choices, 
+        default=FactValueType.SCALAR
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -68,6 +79,7 @@ class FactInstance(models.Model):
         indexes = [
             models.Index(fields=['fact_version', 'context_hash']),
         ]
+        unique_together = ('fact_version', 'context_hash')
     
     def __str__(self):
         return f"{self.fact_version} ({self.status})"
