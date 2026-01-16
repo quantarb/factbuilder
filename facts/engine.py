@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 from .taxonomy import build_taxonomy, resolve_fact, FactStore
 from .models import Question, Answer, FactInstance
 from .context import normalize_context
+from .router import IntentRouter
 import json
 from jinja2 import Template
 
@@ -16,17 +17,27 @@ except ImportError:
 class QAEngine:
     def __init__(self):
         self.registry = build_taxonomy()
+        self.router = IntentRouter()
         self.llm_service = LLMService() if LLMService else None
         
     def answer_question(self, question_text: str, user=None) -> Dict[str, Any]:
         question_obj = Question.objects.create(text=question_text, user=user)
         
-        intent, context = self._parse_intent(question_text)
+        # 1. Deterministic Routing
+        fact_version, context = self.router.route(question_text)
+        
+        # 2. LLM Fallback
+        if not fact_version and self.llm_service:
+            intent, context = self._parse_intent_llm(question_text)
+            if intent:
+                spec = self.registry.spec(intent)
+                if spec and spec.version_obj:
+                    fact_version = spec.version_obj
 
         if user:
             context['user'] = user
 
-        if not intent:
+        if not fact_version:
             if self.llm_service:
                 return self._handle_unrecognized_intent(question_obj, question_text)
             else:
@@ -35,14 +46,16 @@ class QAEngine:
         store = FactStore()
         try:
             # resolve_fact now returns a FactInstance
-            fact_instance = resolve_fact(self.registry, store, intent, context)
+            fact_instance = resolve_fact(self.registry, store, fact_version.fact_definition.id, context)
             value = fact_instance.value
             
-            answer_text = self._format_answer(intent, value, context)
+            answer_text = self._format_answer(fact_version.fact_definition.id, value, context)
             self._save_interaction(question_obj, fact_instance, answer_text)
             return {"text": answer_text}
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {"text": f"Error calculating answer: {str(e)}"}
 
     def _handle_unrecognized_intent(self, question_obj, text):
@@ -77,10 +90,7 @@ class QAEngine:
         else:
             return {"text": "I'm sorry, I don't have the data to answer that question."}
 
-    def _parse_intent(self, text: str) -> tuple[Optional[str], Dict[str, Any]]:
-        if not self.llm_service:
-            return self._parse_intent_regex(text)
-
+    def _parse_intent_llm(self, text: str) -> tuple[Optional[str], Dict[str, Any]]:
         # Pass full spec info including schema to LLM
         available_facts = []
         for fact_id, spec in self.registry.all_specs().items():
@@ -100,10 +110,6 @@ class QAEngine:
             intent = None
             
         return intent, context
-
-    def _parse_intent_regex(self, text: str) -> tuple[Optional[str], Dict[str, Any]]:
-        # Fallback regex implementation (omitted for brevity, same as before)
-        return None, {}
 
     def _format_answer(self, fact_id: str, value: Any, context: Dict[str, Any]) -> str:
         # 1. Try to use the Jinja2 template if available

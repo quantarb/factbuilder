@@ -62,4 +62,10 @@ return bank_txs + cc_txs
             )
             self.stdout.write(self.style.SUCCESS(f"Seeded {fact_id} v1"))
         else:
-            self.stdout.write(f"{fact_id} already has an approved version.")
+            # Update the code if it's different (for development convenience)
+            if existing.code != code.strip():
+                existing.code = code.strip()
+                existing.save()
+                self.stdout.write(self.style.SUCCESS(f"Updated code for {fact_id} v1"))
+            else:
+                self.stdout.write(f"{fact_id} already has an approved version.")

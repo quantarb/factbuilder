@@ -19,6 +19,7 @@ from django.urls import path
 from conversations import views as chat_views
 
 urlpatterns = [
+    path('', chat_views.chat_view, name='home'), # Set chat as default home
     path('admin/', admin.site.urls),
     path('chat/', chat_views.chat_view, name='chat'),
     path('chat/api/conversations/', chat_views.get_conversations, name='get_conversations'),

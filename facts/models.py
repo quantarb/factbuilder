@@ -17,6 +17,8 @@ class FactDefinition(models.Model):
         DISTRIBUTION = 'distribution', 'Distribution'
 
     id = models.CharField(max_length=255, primary_key=True) # snake_case, stable
+    namespace = models.CharField(max_length=100, blank=True, db_index=True)
+    slug = models.CharField(max_length=100, blank=True, db_index=True)
     description = models.TextField(blank=True)
     data_type = models.CharField(
         max_length=50, 
@@ -27,6 +29,17 @@ class FactDefinition(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     history = HistoricalRecords()
+
+    def save(self, *args, **kwargs):
+        if not self.namespace or not self.slug:
+            # Auto-populate from id if missing
+            parts = self.id.split('.', 1)
+            if len(parts) == 2:
+                self.namespace, self.slug = parts
+            else:
+                self.namespace = 'default'
+                self.slug = self.id
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.id
@@ -48,7 +61,8 @@ class FactDefinitionVersion(models.Model):
     
     fact_definition = models.ForeignKey(FactDefinition, on_delete=models.CASCADE, related_name='versions')
     version = models.IntegerField()
-    requires = models.JSONField(default=list) # list of fact ids
+    requires = models.JSONField(default=list) # list of fact ids (Legacy)
+    dependencies = models.JSONField(default=list, blank=True, help_text="Structured dependency edges")
     parameters_schema = models.JSONField(default=dict, blank=True)
     output_template = models.TextField(blank=True, null=True)
     logic_type = models.CharField(max_length=20, choices=LOGIC_TYPE_CHOICES, default='python')
@@ -67,6 +81,20 @@ class FactDefinitionVersion(models.Model):
     def __str__(self):
         return f"{self.fact_definition_id} v{self.version}"
 
+class IntentRecognizer(models.Model):
+    """
+    Stores recognition data for a specific fact version.
+    """
+    fact_version = models.OneToOneField(FactDefinitionVersion, on_delete=models.CASCADE, related_name='recognizer')
+    example_questions = models.JSONField(default=list, blank=True)
+    regex_patterns = models.JSONField(default=list, blank=True)
+    keywords = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Recognizer for {self.fact_version}"
+
 class FactInstance(models.Model):
     """
     Reusable cached computation.
@@ -80,6 +108,13 @@ class FactInstance(models.Model):
     context = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
     context_hash = models.CharField(max_length=64, db_index=True)
     value = models.JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)
+    
+    # Provenance fields
+    provenance = models.JSONField(default=dict, blank=True, encoder=DjangoJSONEncoder)
+    confidence = models.FloatField(default=1.0)
+    valid_from = models.DateTimeField(null=True, blank=True)
+    valid_to = models.DateTimeField(null=True, blank=True)
+
     computed_at = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='success')
     error = models.TextField(null=True, blank=True)
