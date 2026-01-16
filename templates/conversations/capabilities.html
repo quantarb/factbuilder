@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>System Capabilities</h2>
+    <p class="lead">Here are the questions FactBuilder can currently answer for you.</p>
+
+    <div class="row">
+        {% for cap in capabilities %}
+        <div class="col-md-12 mb-4">
+            <div class="card">
+                <div class="card-header bg-light">
+                    <strong>{{ cap.fact_id }}</strong> - {{ cap.description }}
+                </div>
+                <div class="card-body">
+                    <h5 class="card-title text-primary">{{ cap.question }}</h5>
+                    <div class="card-text bg-light p-3 border rounded mb-3">
+                        <pre style="white-space: pre-wrap; margin-bottom: 0;">{{ cap.answer }}</pre>
+                    </div>
+
+                    {% if cap.all_examples|length > 1 %}
+                    <small class="text-muted">
+                        <strong>Other ways to ask:</strong>
+                        <ul>
+                            {% for ex in cap.all_examples %}
+                                {% if ex != cap.question %}
+                                    <li>{{ ex }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </ul>
+                    </small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12">
+            <div class="alert alert-info">
+                No capabilities defined yet. Run <code>python manage.py setup_data</code> to seed the system.
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
