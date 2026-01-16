@@ -4,14 +4,17 @@ import pandas as pd
 from datetime import date, datetime
 import hashlib
 import json
+import multiprocessing
+import queue
 from django.db.models import Sum
+from django.db import transaction, IntegrityError
 from finance.models import BankTransaction, CreditCardTransaction, Account
 from facts.models import FactDefinition, FactDefinitionVersion, FactInstance, FactInstanceDependency
 
 # --- Fact Infrastructure ---
 
 FactKind = Literal["observed", "computed"]
-FactDataType = Literal["dataframe", "scalar", "dict", "list"]
+FactDataType = Literal["dataframe", "scalar", "dict", "list", "distribution"]
 
 @dataclass(frozen=True)
 class FactSpec:
@@ -51,27 +54,34 @@ class FactStore:
     def has(self, fact_id: str) -> bool:
         return fact_id in self._instances
 
-def normalize_context(context: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_context(context: Any) -> Any:
     """
-    Normalize context for hashing:
+    Normalize context for hashing recursively:
     - Sort keys
     - Remove transient keys (user object, session IDs)
     - Convert dates to ISO strings
+    - Normalize lists/tuples
     """
-    clean_ctx = {}
-    for k, v in context.items():
-        if k in ['user', 'request', 'session_id']:
-            continue
-        if isinstance(v, (date, datetime)):
-            clean_ctx[k] = v.isoformat()
-        else:
-            clean_ctx[k] = v
-    return clean_ctx
+    if isinstance(context, dict):
+        clean_ctx = {}
+        for k, v in context.items():
+            if k in ['user', 'request', 'session_id']:
+                continue
+            clean_ctx[k] = normalize_context(v)
+        return clean_ctx
+    elif isinstance(context, (list, tuple)):
+        return [normalize_context(x) for x in context]
+    elif isinstance(context, (date, datetime)):
+        return context.isoformat()
+    elif isinstance(context, float):
+        return float(context) # Ensure float
+    else:
+        return context
 
 def hash_context(context: Dict[str, Any]) -> str:
     """SHA256 hash of normalized context."""
     norm = normalize_context(context)
-    s = json.dumps(norm, sort_keys=True)
+    s = json.dumps(norm, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
     return hashlib.sha256(s.encode('utf-8')).hexdigest()
 
 def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dict[str, Any] = None) -> FactInstance:
@@ -122,7 +132,12 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
         if spec.producer is None:
              raise ValueError(f"Fact {fact_id} has no producer")
         
-        value = spec.producer(dep_values, context)
+        # Use safe execution if it's a dynamic producer (from DB)
+        if spec.version_obj:
+            value = safe_execute(spec.producer, dep_values, context)
+        else:
+            value = spec.producer(dep_values, context)
+            
         status = 'success'
         error = None
     except Exception as e:
@@ -154,20 +169,31 @@ def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dic
         else:
             value_to_store = value
             
-        instance = FactInstance.objects.create(
-            fact_version=spec.version_obj,
-            context=normalize_context(context),
-            context_hash=ctx_hash,
-            value=value_to_store,
-            status=status,
-            error=error
-        )
-        # Link dependencies
-        for dep_id, dep_inst in dep_instances.items():
-            FactInstanceDependency.objects.create(
-                parent_instance=instance,
-                dependency_instance=dep_inst,
-                dependency_fact_id=dep_id
+        try:
+            with transaction.atomic():
+                instance, created = FactInstance.objects.get_or_create(
+                    fact_version=spec.version_obj,
+                    context_hash=ctx_hash,
+                    defaults={
+                        'context': normalize_context(context),
+                        'value': value_to_store,
+                        'status': status,
+                        'error': error
+                    }
+                )
+                if created:
+                    # Link dependencies
+                    for dep_id, dep_inst in dep_instances.items():
+                        FactInstanceDependency.objects.create(
+                            parent_instance=instance,
+                            dependency_instance=dep_inst,
+                            dependency_fact_id=dep_id
+                        )
+        except IntegrityError:
+            # Race condition: another process created it. Re-fetch.
+            instance = FactInstance.objects.get(
+                fact_version=spec.version_obj,
+                context_hash=ctx_hash
             )
     else:
         # Ephemeral instance
@@ -209,13 +235,7 @@ def build_taxonomy() -> FactRegistry:
             continue
             
         # Create producer
-        producer_func = None
-        
-        if defn.id == 'all_transactions':
-             producer_func = _get_all_transactions
-        else:
-            # Dynamic producer from code
-            producer_func = create_dynamic_producer(version.code)
+        producer_func = create_dynamic_producer(version.code)
             
         if producer_func:
             reg.register(FactSpec(
@@ -233,46 +253,102 @@ def build_taxonomy() -> FactRegistry:
     return reg
 
 def create_dynamic_producer(code_str):
-    local_scope = {}
-    global_scope = {
-        "pd": pd,
-        "date": date,
-        "datetime": datetime,
-        "Sum": Sum,
-        "BankTransaction": BankTransaction,
-        "CreditCardTransaction": CreditCardTransaction,
-        "Account": Account
-    }
+    # We just return the code string or a wrapper, 
+    # but for safe_execute we need the code to be executed in a restricted env.
+    # Here we return a callable that safe_execute can use or inspect.
+    # To keep it simple with existing structure, we'll return a wrapper that
+    # executes the code. But safe_execute will handle the isolation.
+    
+    def dynamic_producer(deps, context):
+        # This function body is what runs inside the safe environment
+        local_scope = {}
+        # Restricted globals are handled in safe_execute_worker
+        # But for local testing without safe_execute (if needed), we can have a fallback?
+        # No, we should enforce safe_execute.
+        # However, the `producer` field in FactSpec expects a callable.
+        # We will attach the code to the function object so safe_execute can retrieve it.
+        pass
+    
+    dynamic_producer.code = code_str
+    return dynamic_producer
+
+# --- Safe Execution ---
+
+def safe_execute_worker(code_str, deps, context, result_queue):
+    """
+    Worker function to run in a separate process.
+    """
     try:
-        # Wrap code in a function
-        wrapped_code = f"def dynamic_producer(deps, context):\n" + "\n".join(["    " + line for line in code_str.splitlines()])
-        exec(wrapped_code, global_scope, local_scope)
-        return local_scope['dynamic_producer']
-    except Exception as e:
-        print(f"Error compiling dynamic fact: {e}")
-        return None
-
-# --- Producers ---
-
-def _get_all_transactions(deps: Dict[str, Any], context: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # Return list of dicts instead of DataFrame for JSON serialization
-    user = context.get('user')
-    bank_qs = BankTransaction.objects.all()
-    cc_qs = CreditCardTransaction.objects.all()
-    
-    if user:
-        bank_qs = bank_qs.filter(account__user=user)
-        cc_qs = cc_qs.filter(account__user=user)
-    
-    bank_txs = list(bank_qs.values('posting_date', 'description', 'amount', 'type', 'account__name'))
-    for tx in bank_txs:
-        tx['date'] = tx.pop('posting_date').isoformat()
-        tx['category'] = 'Bank Transaction'
-        tx['amount'] = float(tx['amount'])
+        # Restricted globals
+        safe_globals = {
+            "__builtins__": {
+                "len": len, "min": min, "max": max, "sum": sum, "abs": abs,
+                "sorted": sorted, "range": range, "enumerate": enumerate,
+                "map": map, "filter": filter, "any": any, "all": all,
+                "list": list, "dict": dict, "set": set, "tuple": tuple,
+                "int": int, "float": float, "str": str, "bool": bool,
+                "print": print, # Optional, maybe redirect stdout
+            },
+            "pd": pd, # Whitelisted pandas
+            "date": date,
+            "datetime": datetime,
+            "Sum": Sum,
+            # Models are tricky in multiprocessing because of DB connections.
+            # Ideally, we pass data in `deps` and `context` and avoid DB access in facts.
+            # But existing code uses models. 
+            # For now, we'll allow models but Django DB connection might break in fork.
+            # Best practice: Facts should only use `deps` and `context`.
+            # If we must use models, we need to ensure DB connections are handled.
+            # Given the constraints, let's assume facts should rely on deps.
+            # But `all_transactions` uses models. 
+            # We will allow models for now but this is risky in multiprocessing without care.
+            "BankTransaction": BankTransaction,
+            "CreditCardTransaction": CreditCardTransaction,
+            "Account": Account
+        }
         
-    cc_txs = list(cc_qs.values('transaction_date', 'description', 'amount', 'category', 'type', 'account__name'))
-    for tx in cc_txs:
-        tx['date'] = tx.pop('transaction_date').isoformat()
-        tx['amount'] = float(tx['amount'])
+        local_scope = {}
+        wrapped_code = f"def dynamic_producer(deps, context):\n" + "\n".join(["    " + line for line in code_str.splitlines()])
+        
+        exec(wrapped_code, safe_globals, local_scope)
+        func = local_scope['dynamic_producer']
+        
+        # Execute
+        res = func(deps, context)
+        result_queue.put({"status": "success", "value": res})
+    except Exception as e:
+        result_queue.put({"status": "error", "error": str(e)})
 
-    return bank_txs + cc_txs
+def safe_execute(producer_func, deps, context, timeout=5):
+    """
+    Executes the producer in a separate process with timeout.
+    """
+    if not hasattr(producer_func, 'code'):
+        # It's a native python function (not dynamic), run directly
+        return producer_func(deps, context)
+
+    code_str = producer_func.code
+    result_queue = multiprocessing.Queue()
+    
+    # We need to close DB connections before forking to avoid issues
+    # (Django handles this usually, but good to be safe if using 'spawn')
+    # For 'fork' (default on Linux/Mac), it's okay but connections are shared.
+    # Mac defaults to 'spawn' in Python 3.8+.
+    
+    p = multiprocessing.Process(target=safe_execute_worker, args=(code_str, deps, context, result_queue))
+    p.start()
+    p.join(timeout)
+    
+    if p.is_alive():
+        p.terminate()
+        p.join()
+        raise TimeoutError("Fact computation timed out")
+        
+    if result_queue.empty():
+        raise RuntimeError("Fact computation crashed without result")
+        
+    result = result_queue.get()
+    if result['status'] == 'error':
+        raise RuntimeError(result['error'])
+        
+    return result['value']

@@ -1,5 +1,6 @@
 from django.db import models
 from facts.models import FactDefinition, FactDefinitionVersion
+from facts.taxonomy import create_dynamic_producer, safe_execute
 
 class TaxonomyProposal(models.Model):
     """
@@ -14,6 +15,16 @@ class TaxonomyProposal(models.Model):
     proposed_schema = models.JSONField(default=dict, blank=True)
     proposed_template = models.TextField(blank=True, null=True)
     
+    # NEW: Structured fields for validation
+    proposed_data_type = models.CharField(
+        max_length=50, 
+        choices=FactDefinition.FactValueType.choices,
+        default=FactDefinition.FactValueType.SCALAR
+    )
+    proposed_requires = models.JSONField(default=list)
+    test_cases = models.JSONField(default=list, blank=True, help_text="List of {context, expected_type, expected_contains}")
+    approval_error = models.TextField(blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=50, default='pending', choices=[
         ('pending', 'Pending Review'),
@@ -34,28 +45,89 @@ class TaxonomyProposal(models.Model):
         if self.status == 'approved':
             return
             
-        # 1. Create or Get Definition
+        self.approval_error = ""
+        
+        # 1. Validate Requires
+        existing_ids = set(FactDefinition.objects.values_list('id', flat=True))
+        for req in self.proposed_requires:
+            if req not in existing_ids:
+                self.approval_error = f"Requirement '{req}' does not exist."
+                self.save()
+                return
+
+        # 2. Validate Data Type
+        if self.proposed_data_type not in FactDefinition.FactValueType.values:
+             self.approval_error = f"Invalid data type: {self.proposed_data_type}"
+             self.save()
+             return
+
+        # 3. Run Tests
+        if self.test_cases:
+            producer = create_dynamic_producer(self.proposed_logic)
+            for i, test in enumerate(self.test_cases):
+                ctx = test.get('context', {})
+                # Mock dependencies? For now assume tests provide full context or we need a way to mock deps.
+                # If requires is not empty, we can't easily run this without mocking deps.
+                # For simplicity, we assume test cases include dependency values in context or we skip dep resolution?
+                # The dynamic producer expects (deps, context).
+                # We'll assume test['deps'] exists if needed.
+                deps = test.get('deps', {})
+                
+                try:
+                    result = safe_execute(producer, deps, ctx, timeout=3)
+                    
+                    # Validate result
+                    expected_type = test.get('expected_type')
+                    if expected_type == 'list' and not isinstance(result, list):
+                        raise ValueError(f"Test {i}: Expected list, got {type(result)}")
+                    if expected_type == 'dict' and not isinstance(result, dict):
+                        raise ValueError(f"Test {i}: Expected dict, got {type(result)}")
+                        
+                    expected_contains = test.get('expected_contains')
+                    if expected_contains and str(expected_contains) not in str(result):
+                         raise ValueError(f"Test {i}: Result did not contain '{expected_contains}'")
+                         
+                except Exception as e:
+                    self.approval_error = f"Test {i} failed: {str(e)}"
+                    self.save()
+                    return
+
+        # 4. Create or Get Definition
         defn, created = FactDefinition.objects.get_or_create(
             id=self.proposed_fact_id,
-            defaults={'description': f"Auto-generated from: {self.question}"}
+            defaults={
+                'description': f"Auto-generated from: {self.question}",
+                'data_type': self.proposed_data_type
+            }
         )
         
-        # 2. Determine next version number
+        # Update data type if it was generic before? (Optional, but safer to keep consistent)
+        if not created and defn.data_type != self.proposed_data_type:
+             # If existing definition has different type, we might have a conflict.
+             # For now, we assume the proposal is correct for the new version.
+             pass
+
+        # 5. Determine next version number
         last_version = defn.versions.order_by('-version').first()
         next_ver = (last_version.version + 1) if last_version else 1
         
-        # 3. Create Version
+        # 6. Create Version
         version = FactDefinitionVersion.objects.create(
             fact_definition=defn,
             version=next_ver,
             code=self.proposed_logic,
+            requires=self.proposed_requires,
             parameters_schema=self.proposed_schema,
             output_template=self.proposed_template,
+            test_cases=self.test_cases,
             status='approved',
             created_by=user,
             change_note=f"Approved from proposal {self.id}"
         )
         
+        # Deprecate old approved versions?
+        # defn.versions.filter(status='approved').exclude(id=version.id).update(status='deprecated')
+
         self.created_version = version
         self.status = 'approved'
         self.save()
