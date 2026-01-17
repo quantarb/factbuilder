@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Literal
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import multiprocessing
@@ -381,6 +381,7 @@ def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
             "Decimal": Decimal,
             "date": date,
             "datetime": datetime,
+            "timedelta": timedelta,
             "Sum": Sum,
             "BankTransaction": BankTransaction,
             "CreditCardTransaction": CreditCardTransaction,

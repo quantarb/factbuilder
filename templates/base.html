@@ -5,47 +5,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FactBuilder</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container">
-            <a class="navbar-brand" href="{% url 'home' %}">FactBuilder</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'chat' %}">Chat</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'capabilities' %}">Capabilities</a>
-                    </li>
-                </ul>
-                <ul class="navbar-nav">
-                    {% if user.is_authenticated %}
-                        <li class="nav-item">
-                            <span class="nav-link text-light">Hello, {{ user.username }}</span>
-                        </li>
-                        <li class="nav-item">
-                            <form method="post" action="{% url 'logout' %}">
+<body class="bg-gray-100 min-h-screen flex flex-col">
+    <nav class="bg-gray-800 text-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center">
+                    <a class="font-bold text-xl" href="{% url 'home' %}">FactBuilder</a>
+                    <div class="ml-10 flex items-baseline space-x-4">
+                        <a href="{% url 'chat' %}" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700">Chat</a>
+                        <a href="{% url 'capabilities' %}" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700">Capabilities</a>
+                    </div>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-4 flex items-center md:ml-6">
+                        {% if user.is_authenticated %}
+                            <span class="text-gray-300 text-sm mr-4">Hello, {{ user.username }}</span>
+                            <form method="post" action="{% url 'logout' %}" class="inline">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-link nav-link">Logout</button>
+                                <button type="submit" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</button>
                             </form>
-                        </li>
-                    {% else %}
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'login' %}">Login</a>
-                        </li>
-                    {% endif %}
-                </ul>
+                        {% else %}
+                            <a href="{% url 'login' %}" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Login</a>
+                        {% endif %}
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
 
-    {% block content %}
-    {% endblock %}
+    <main class="flex-grow">
+        {% block content %}
+        {% endblock %}
+    </main>
 </body>
 </html>

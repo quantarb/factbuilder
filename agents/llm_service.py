@@ -6,6 +6,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
+from django.core.management import call_command
+from io import StringIO
 
 class FeasibilityAnalysis(BaseModel):
     feasible: bool = Field(description="Whether the question can be answered by the available data")
@@ -25,6 +27,20 @@ class CapabilityList(BaseModel):
 class IntentClassification(BaseModel):
     intent: Optional[str] = Field(description="The ID of the fact that best answers the question, or null if none match.")
     context: Dict[str, Any] = Field(description="Extracted entities like 'date', 'account_name', 'category', 'start_date', 'end_date'.")
+
+def get_schema_snapshot(apps=("facts", "finance")) -> str:
+    buf = StringIO()
+    try:
+        # Try to use the print_schema command if it exists
+        call_command("print_schema", "--pretty", "--apps", *apps, stdout=buf)
+        return buf.getvalue()
+    except Exception:
+        # Fallback if command doesn't exist or fails
+        return """
+        BankTransaction(date, amount, description, type, account_name, balance)
+        CreditCardTransaction(date, amount, category, description, account_name)
+        Account(name, user)
+        """
 
 class LLMService:
     def __init__(self):
@@ -95,6 +111,9 @@ class LLMService:
         if not self.llm:
             return {"feasible": False, "reason": "LLM not configured"}
 
+        # Get dynamic schema
+        dynamic_schema = get_schema_snapshot()
+        
         parser = JsonOutputParser(pydantic_object=FeasibilityAnalysis)
 
         prompt = PromptTemplate(
@@ -102,14 +121,27 @@ class LLMService:
             You are an expert Python developer for a financial QA system.
             The system has a 'Fact Taxonomy' where facts are computed by producer functions.
             
-            The system provides a base fact 'all_transactions' which is a Pandas DataFrame with columns:
-            ['date', 'description', 'amount', 'type', 'account_name', 'category']
+            The system provides a base fact 'all_transactions' which is a Pandas DataFrame derived from the following models:
+            
+            SCHEMA:
+            {schema}
+            
+            RULES:
+            - Use ONLY the models/fields provided in SCHEMA.
+            - Do NOT invent new fields/models.
+            - If you need a concept not in SCHEMA (e.g. 'Merchant', 'Vendor'), respond exactly:
+              feasible: False
+              reason: "This question cannot be answered yet because merchant information does not exist."
             
             The user asked: "{question}"
             
             Can this be answered by writing a Python function that processes 'all_transactions'?
             
-            If YES:
+            CRITICAL CONSTRAINT:
+            The 'description' field is opaque text. 
+            We do NOT perform string matching on descriptions to infer merchants.
+            
+            If YES (and not about merchants):
             1. Set feasible=True.
             2. Provide a 'fact_id' (snake_case). 
                IMPORTANT: Make the fact GENERAL. 
@@ -125,14 +157,14 @@ class LLMService:
             
             {format_instructions}
             """,
-            input_variables=["question"],
+            input_variables=["question", "schema"],
             partial_variables={"format_instructions": parser.get_format_instructions()},
         )
 
         chain = prompt | self.llm | parser
         
         try:
-            result = chain.invoke({"question": question})
+            result = chain.invoke({"question": question, "schema": dynamic_schema})
             return result
         except Exception as e:
             return {"feasible": False, "reason": f"LLM Error: {str(e)}"}
@@ -144,10 +176,7 @@ class LLMService:
 
         parser = JsonOutputParser(pydantic_object=CapabilityList)
         
-        schema_context = """
-        BankTransaction(date, amount, description, type, account_name)
-        CreditCardTransaction(date, amount, category, description, account_name)
-        """
+        schema_context = get_schema_snapshot()
 
         prompt = PromptTemplate(
             template="""

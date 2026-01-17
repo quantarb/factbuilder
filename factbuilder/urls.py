@@ -22,6 +22,7 @@ urlpatterns = [
     path('', chat_views.chat_view, name='home'), # Set chat as default home
     path('admin/', admin.site.urls),
     path('accounts/', include('django.contrib.auth.urls')),
+    path('accounts/register/', chat_views.register_view, name='register'),
     path('chat/', chat_views.chat_view, name='chat'),
     path('capabilities/', chat_views.capabilities_view, name='capabilities'),
     path('chat/api/conversations/', chat_views.get_conversations, name='get_conversations'),

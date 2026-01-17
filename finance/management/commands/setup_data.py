@@ -1,6 +1,6 @@
 import os
 import csv
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from finance.models import Account, BankTransaction, CreditCardTransaction
@@ -33,6 +33,7 @@ class Command(BaseCommand):
         
         self.setup_initial_facts()
         self.setup_level0_facts()
+        self.setup_level1_facts()
         self.run_initial_questions(admin_user)
 
     def create_superuser(self):
@@ -337,7 +338,332 @@ return {
             keywords=["provenance", "breakdown", "source"]
         )
 
-    def _create_fact_with_intent(self, id, desc, code, data_type, regex_patterns, keywords):
+    def setup_level1_facts(self):
+        self.stdout.write("Setting up Level 1 Facts & Intents...")
+
+        # 1. money.balance_at_date
+        code_balance_at_date = """
+target_date_str = context.get('date')
+target_date = None
+
+if target_date_str == 'yesterday':
+    target_date = date.today() - timedelta(days=1)
+elif target_date_str:
+    try:
+        target_date = datetime.strptime(target_date_str, '%Y-%m-%d').date()
+    except:
+        pass
+
+if not target_date:
+    return {"error": "Invalid date"}
+
+user = context.get('user')
+accounts = Account.objects.filter(user=user)
+total = Decimal('0.00')
+
+for acc in accounts:
+    # Find latest transaction on or before target_date
+    tx = BankTransaction.objects.filter(
+        account=acc, 
+        posting_date__lte=target_date,
+        balance__isnull=False
+    ).order_by('-posting_date', '-id').first()
+    
+    if tx:
+        total += Decimal(str(tx.balance))
+
+return {
+    "date": target_date.isoformat(),
+    "balance": float(total),
+    "currency": "USD"
+}
+"""
+        self._create_fact_with_intent(
+            id="money.balance_at_date",
+            desc="Balance at a specific date",
+            code=code_balance_at_date,
+            data_type="dict",
+            regex_patterns=[r"what was my balance (on )?(?P<date>yesterday|[\w\s]+)\??"],
+            keywords=["balance", "yesterday"]
+        )
+
+        # 2. money.next_paycheck
+        code_next_paycheck = """
+user = context.get('user')
+accounts = Account.objects.filter(user=user)
+
+# Find latest payroll
+latest_pay = BankTransaction.objects.filter(
+    account__in=accounts,
+    amount__gt=0,
+    description__icontains='Payroll'
+).order_by('-posting_date').first()
+
+if not latest_pay:
+    return None
+
+# Assume bi-weekly for MVP
+last_date = latest_pay.posting_date
+next_date = last_date + timedelta(days=14)
+days_until = (next_date - date.today()).days
+
+return {
+    "next_paycheck_date": next_date.isoformat(),
+    "days_until": days_until,
+    "estimated_amount": float(latest_pay.amount)
+}
+"""
+        self._create_fact_with_intent(
+            id="money.next_paycheck",
+            desc="Next estimated paycheck",
+            code=code_next_paycheck,
+            data_type="dict",
+            regex_patterns=[],
+            keywords=[]
+        )
+
+        # 3. money.obligations (Inferred Bills)
+        code_obligations = """
+# Simple heuristic: Look for specific keywords in past 60 days
+keywords = {'Rent': 30, 'Electric': 30, 'Netflix': 30, 'Internet': 30}
+user = context.get('user')
+accounts = Account.objects.filter(user=user)
+
+obligations = []
+today = date.today()
+
+for kw, period in keywords.items():
+    # Find last occurrence
+    tx = BankTransaction.objects.filter(
+        account__in=accounts,
+        description__icontains=kw,
+        amount__lt=0
+    ).order_by('-posting_date').first()
+    
+    if tx:
+        # Project next date
+        # If paid on day X, next is X + period
+        next_due = tx.posting_date + timedelta(days=period)
+        if next_due < today:
+             # If overdue, maybe it's due today or we missed it. 
+             # For simplicity, let's say it's due today if calculated in past
+             next_due = today
+             
+        obligations.append({
+            "name": kw,
+            "amount": abs(float(tx.amount)),
+            "due_date": next_due.isoformat()
+        })
+
+return sorted(obligations, key=lambda x: x['due_date'])
+"""
+        self._create_fact_with_intent(
+            id="money.obligations",
+            desc="Recurring obligations inferred from history",
+            code=code_obligations,
+            data_type="list",
+            regex_patterns=[],
+            keywords=[]
+        )
+
+        # 4. money.obligations_due_before_paycheck
+        code_obligations_due = """
+paycheck = deps['money.next_paycheck']
+all_obligations = deps['money.obligations']
+
+if not paycheck:
+    return []
+
+cutoff = datetime.strptime(paycheck['next_paycheck_date'], '%Y-%m-%d').date()
+today = date.today()
+
+due = []
+for ob in all_obligations:
+    d = datetime.strptime(ob['due_date'], '%Y-%m-%d').date()
+    if today <= d < cutoff:
+        due.append(ob)
+
+return due
+"""
+        self._create_fact_with_intent(
+            id="money.obligations_due_before_paycheck",
+            desc="Bills due before next paycheck",
+            code=code_obligations_due,
+            data_type="list",
+            regex_patterns=[r"what bills are due before my next paycheck\??"],
+            keywords=["bills", "due"],
+            requires=['money.next_paycheck', 'money.obligations']
+        )
+
+        # 5. money.spoken_for
+        code_spoken_for = """
+due_bills = deps['money.obligations_due_before_paycheck']
+total = sum(item['amount'] for item in due_bills)
+return {
+    "amount": total,
+    "currency": "USD",
+    "breakdown": due_bills
+}
+"""
+        self._create_fact_with_intent(
+            id="money.spoken_for",
+            desc="Money already committed to bills",
+            code=code_spoken_for,
+            data_type="dict",
+            regex_patterns=[r"how much money is (already )?spoken for\??"],
+            keywords=["spoken for"],
+            requires=['money.obligations_due_before_paycheck']
+        )
+
+        # 6. money.spending_time_range (Level 1 - Time-based)
+        code_spending_time_range = """
+user = context.get('user')
+start_date_str = context.get('start_date')
+end_date_str = context.get('end_date')
+period = context.get('period') # yesterday, last_week, last_month
+
+today = date.today()
+start_date = None
+end_date = today
+
+if period == 'yesterday':
+    start_date = today - timedelta(days=1)
+    end_date = start_date
+elif period == 'last_week':
+    start_date = today - timedelta(days=7)
+elif period == 'last_month':
+    start_date = today - timedelta(days=30)
+elif start_date_str:
+    try:
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        if end_date_str:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    except:
+        pass
+
+if not start_date:
+    return {"error": "Invalid date range"}
+
+accounts = Account.objects.filter(user=user)
+total_spent = Decimal('0.00')
+txs = []
+
+# Bank Transactions (Outflows)
+bank_txs = BankTransaction.objects.filter(
+    account__in=accounts,
+    posting_date__gte=start_date,
+    posting_date__lte=end_date,
+    amount__lt=0
+)
+
+for tx in bank_txs:
+    total_spent += abs(tx.amount)
+    txs.append({
+        "date": tx.posting_date.isoformat(),
+        "description": tx.description,
+        "amount": float(abs(tx.amount)),
+        "source": "Bank"
+    })
+
+# Credit Card Transactions (Outflows/Purchases)
+cc_txs = CreditCardTransaction.objects.filter(
+    account__in=accounts,
+    transaction_date__gte=start_date,
+    transaction_date__lte=end_date,
+    amount__gt=0 # CC positive is usually charge, but let's check model. Usually positive amount is charge.
+)
+
+for tx in cc_txs:
+    total_spent += tx.amount
+    txs.append({
+        "date": tx.transaction_date.isoformat(),
+        "description": tx.description,
+        "amount": float(tx.amount),
+        "source": "Credit Card"
+    })
+
+return {
+    "total_spent": float(total_spent),
+    "currency": "USD",
+    "period": period or f"{start_date} to {end_date}",
+    "transactions": sorted(txs, key=lambda x: x['date'], reverse=True)
+}
+"""
+        self._create_fact_with_intent(
+            id="money.spending_time_range",
+            desc="Spending over a time range",
+            code=code_spending_time_range,
+            data_type="dict",
+            regex_patterns=[
+                r"how much did i spend (?P<period>yesterday|last week|last month)\??",
+                r"how much did i spend (from )?(?P<start_date>\d{4}-\d{2}-\d{2})( to )?(?P<end_date>\d{4}-\d{2}-\d{2})?\??"
+            ],
+            keywords=["spend", "spent", "yesterday", "last week"]
+        )
+
+        # 7. money.income_time_range (Level 1 - Direction-based)
+        code_income_time_range = """
+user = context.get('user')
+days = context.get('days', 30)
+if isinstance(days, str) and days.isdigit():
+    days = int(days)
+
+today = date.today()
+start_date = today - timedelta(days=days)
+
+accounts = Account.objects.filter(user=user)
+total_income = Decimal('0.00')
+txs = []
+
+# Bank Transactions (Inflows)
+bank_txs = BankTransaction.objects.filter(
+    account__in=accounts,
+    posting_date__gte=start_date,
+    amount__gt=0
+)
+
+for tx in bank_txs:
+    total_income += tx.amount
+    txs.append({
+        "date": tx.posting_date.isoformat(),
+        "description": tx.description,
+        "amount": float(tx.amount)
+    })
+
+return {
+    "total_income": float(total_income),
+    "currency": "USD",
+    "period": f"Last {days} days",
+    "transactions": sorted(txs, key=lambda x: x['date'], reverse=True)
+}
+"""
+        self._create_fact_with_intent(
+            id="money.income_time_range",
+            desc="Income over time range",
+            code=code_income_time_range,
+            data_type="dict",
+            regex_patterns=[r"how much money came in (over|in) the last (?P<days>\d+) days\??"],
+            keywords=["income", "came in"]
+        )
+
+        # 8. money.merchant_spending_refusal (Level 1 - Explicit Refusal)
+        code_merchant_refusal = """
+return "This question cannot be answered yet because merchant information does not exist."
+"""
+        self._create_fact_with_intent(
+            id="money.merchant_spending_refusal",
+            desc="Refusal for merchant-based questions",
+            code=code_merchant_refusal,
+            data_type="scalar",
+            regex_patterns=[
+                r"how much did i spend at (?P<merchant>[\w\s]+)( last month| yesterday)?\??",
+                r"how much do i spend at (?P<merchant>[\w\s]+)\??",
+                r"what merchants? do i spend the most money at\??"
+            ],
+            keywords=["merchant", "amazon", "starbucks", "spend at"]
+        )
+
+    def _create_fact_with_intent(self, id, desc, code, data_type, regex_patterns, keywords, requires=None):
         defn, _ = FactDefinition.objects.get_or_create(
             id=id,
             defaults={'description': desc, 'data_type': data_type}
@@ -346,7 +672,12 @@ return {
         ver, _ = FactDefinitionVersion.objects.update_or_create(
             fact_definition=defn,
             version=1,
-            defaults={'code': code.strip(), 'status': 'approved', 'change_note': 'Level 0 Setup'}
+            defaults={
+                'code': code.strip(), 
+                'status': 'approved', 
+                'change_note': 'Setup',
+                'requires': requires or []
+            }
         )
         
         IntentRecognizer.objects.update_or_create(
@@ -361,6 +692,12 @@ return {
         questions = [
             "What is my current cash balance?",
             "Where did this number come from?",
+            "What was my balance yesterday?",
+            "What bills are due before my next paycheck?",
+            "How much money is already spoken for?",
+            "How much did I spend yesterday?",
+            "How much money came in over the last 30 days?",
+            "How much did I spend at Amazon last month?"
         ]
         
         for q_text in questions:

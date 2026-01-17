@@ -2,13 +2,13 @@
 {% load static %}
 
 {% block content %}
-    <div id="root" class="h-full" style="height: calc(100vh - 56px);"></div>
+    <!-- Container for the React App -->
+    <div id="root" class="h-[calc(100vh-64px)]"></div>
 
     <!-- React Dependencies -->
     <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
     <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- Graphviz Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>

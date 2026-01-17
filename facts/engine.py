@@ -59,9 +59,9 @@ class QAEngine:
             return {"text": f"Error calculating answer: {str(e)}"}
 
     def _handle_unrecognized_intent(self, question_obj, text):
-        schema_desc = "BankTransaction(date, amount, description), CreditCardTransaction(date, amount, category)"
-        
-        analysis = self.llm_service.analyze_unanswerable_question(text, schema_desc)
+        # We no longer pass a hardcoded schema string. 
+        # The LLMService now fetches the dynamic schema internally.
+        analysis = self.llm_service.analyze_unanswerable_question(text, available_schema=None)
         
         if analysis.get("feasible"):
             fact_id = analysis.get("fact_id")
@@ -88,7 +88,9 @@ class QAEngine:
                 "proposal_logic": logic_code
             }
         else:
-            return {"text": "I'm sorry, I don't have the data to answer that question."}
+            # If not feasible, return the reason provided by the LLM (e.g. refusal)
+            reason = analysis.get("reason", "I'm sorry, I don't have the data to answer that question.")
+            return {"text": reason}
 
     def _parse_intent_llm(self, text: str) -> tuple[Optional[str], Dict[str, Any]]:
         # Pass full spec info including schema to LLM

@@ -2,62 +2,157 @@
 
 ## Project Overview
 
-FactBuilder is a Django-based financial intelligence application designed to answer a progressive sequence of financial questions, culminating in one core decision:
+FactBuilder is a system for answering progressively harder personal finance questions, starting from raw transactions and building upward toward high-stakes, uncertainty-aware spending decisions.
 
-> “Given everything I know and don’t know, should I spend $X right now — or wait — without increasing my financial risk?”
+The system is intentionally layered. Each level introduces new kinds of knowledge derived from the previous ones.
 
-FactBuilder is built around a fact-based taxonomy and an LLM-assisted coding agent that helps build, extend, and evolve the system’s reasoning capabilities over time.
+If a question cannot be answered with the knowledge available at a given level, FactBuilder should say so explicitly.
 
-Rather than relying on an LLM to answer financial questions directly, FactBuilder uses LLMs to author, propose, and refine new facts and computations—which are then executed deterministically by the system.
+> “This question cannot be answered yet with sufficient confidence.”
+
+That restraint is a core feature of the system.
+
+## Starting Point: Transactions First
+
+FactBuilder begins with transactions.
+
+Transactions are the only assumed primitive at the start:
+* Money moving in or out
+* Amounts
+* Dates
+* Descriptions
+* Optional categories or metadata
+
+Everything else — balances, spending summaries, obligations, income, risk, regret — is derived from transactions over time.
+
+No higher-level concept is assumed until the system has enough evidence to justify it.
+
+## Design Principles
+
+* **Epistemic honesty**: Facts are only asserted when they can be justified from prior knowledge.
+* **Levels are knowledge boundaries**: Higher levels depend on lower levels being correct and complete.
+* **Inference increases uncertainty**: As questions move up levels, answers may include confidence, caveats, or refusal.
+* **“Not answerable yet” is a valid answer**: The system must not guess its way past missing knowledge.
 
 ## The Question Ladder (North Star)
 
-FactBuilder exists to support the following 20 questions, ordered from basic ground truth to high-stakes frugal decisions:
+### Level 0 — Trust & Ground Truth (Point-in-Time)
+“What is true right now, and why?”
 
-### Level 0 — Trust & Ground Truth
+These questions establish verifiable ground truth.
 * What is my current cash balance?
 * Where did this number come from?
 
-### Level 1 — Time & Obligations
-* What was my balance yesterday?
-* What bills are due before my next paycheck?
-* How much money is already spoken for?
+**Characteristics:**
+* Deterministic
+* Fully explainable
+* No inference
+* No parameters (implicit “now” only)
 
-### Level 2 — Available-to-Spend (MVP Boundary)
+If the system cannot fully explain the answer, it must refuse to answer.
+
+### Level 1 — Parameterized Ground Truth (Transactions + Filters)
+“What was true when, where, or for which slice?”
+
+Level 1 introduces parameters, not new concepts. These questions are answered directly from transactions using:
+* Time ranges
+* Filters
+* Simple aggregations
+
+**Examples:**
+* **Time-based:**
+    * How much did I spend yesterday?
+    * How much did I spend last week?
+    * What was my balance on January 1st?
+* **Filter-based:**
+    * How much did I spend on groceries last month?
+    * How much did I spend at Amazon in the last 90 days?
+    * How much income did I receive in the past 2 months?
+* **Combined:**
+    * How much did I spend on restaurants in the last 2 months?
+    * What were my largest expenses last week?
+
+**What Level 1 does not assume:**
+* No bills
+* No paychecks
+* No obligations
+* No recurring patterns
+* No prediction
+
+If the system only knows transactions, Level 1 is still fully answerable.
+
+### Level 2 — Inferred Structure (Patterns from Transactions)
+“What appears to be true repeatedly?”
+
+Level 2 introduces inference. Here, the system begins proposing structure that is not explicitly stated in transactions.
+
+**Examples:**
+* What recurring bills do I appear to have based on my transactions?
+* What recurring income do I appear to have based on my transactions?
+* How confident are you in these recurring patterns?
+
+**Key properties:**
+* Answers include confidence
+* Supporting evidence is required
+* Results are hypotheses, not ground truth
+
+**Failure mode:**
+If patterns are weak or ambiguous, the system must say so.
+
+### Level 3 — Available-to-Spend (MVP Boundary)
+“Given what’s known and inferred, what is safe to spend?”
+
+**Examples:**
 * How much money is actually available to spend right now?
 * How confident are you in that number?
 
-### Level 3 — Spending Context
+This level combines:
+* Ground truth (Levels 0–1)
+* Inferred structure (Level 2)
+
+Uncertainty must be explicit. If uncertainty is too high, the system should decline to give a definitive number.
+
+### Level 4 — Spending Context
+“How does my current behavior compare to my past?”
+
+**Examples:**
 * How much have I spent so far this month?
 * Is that more or less than usual for this point in the month?
 * What category is driving the difference?
 
-### Level 4 — Counterfactuals
+These questions require:
+* Historical baselines
+* Meaningful comparisons
+* Attribution
+
+### Level 5 — Counterfactuals
+“What if I make a different choice?”
+
+**Examples:**
 * What happens if I don’t spend anything else this month?
 * What happens if I spend $X today?
 * What changes if I wait a week?
 
-### Level 5 — Risk & Regret
+Outputs are scenarios, not predictions.
+
+### Level 6 — Risk & Regret
+“What could go wrong, and where is uncertainty concentrated?”
+
+**Examples:**
 * Does spending $X increase my financial risk?
 * What uncertainty is this decision sensitive to?
 * What am I most likely to regret about this purchase?
 
-### Level 6 — Tradeoffs
-* If I make this purchase, what will I likely have to give up later?
-* If I need to save $X later, what should I cut first?
+Risk is probabilistic and contextual.
 
 ### Level 7 — Frugal Mode Decision
+“Given everything you know and don’t know, what should I do?”
+
+**Examples:**
 * Can I afford to spend $X right now without increasing my financial risk?
-* Given everything you know and don’t know, should I do this now, wait, or not do it — and how confident are you?
+* Should I do this now, wait, or not do it — and how confident are you?
 
-## Core Philosophy
-
-* Facts over heuristics
-* Provenance over precision
-* Confidence is required, not optional
-* “Do nothing” is a valid recommendation
-* LLMs build capabilities; they do not decide outcomes
-* The system may refuse to answer if required facts or confidence thresholds are not met.
+If earlier levels are incomplete, the system must refuse to recommend.
 
 ## Core Functionality
 

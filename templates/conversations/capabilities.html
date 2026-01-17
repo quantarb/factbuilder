@@ -1,42 +1,52 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container mt-4">
-    <h2>System Capabilities</h2>
-    <p class="lead">Here are the questions FactBuilder can currently answer for you.</p>
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <h2 class="text-2xl font-bold mb-2">System Capabilities</h2>
+    <p class="text-gray-600 mb-6">Here are the questions FactBuilder can currently answer for you.</p>
 
-    <div class="row">
+    <div class="grid gap-6">
         {% for cap in capabilities %}
-        <div class="col-md-12 mb-4">
-            <div class="card">
-                <div class="card-header bg-light">
-                    <strong>{{ cap.fact_id }}</strong> - {{ cap.description }}
+        <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+            <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                <h3 class="text-sm font-medium text-gray-500">
+                    {{ cap.fact_id }} <span class="mx-2">•</span> {{ cap.description }}
+                </h3>
+            </div>
+            <div class="px-4 py-5 sm:p-6">
+                <h4 class="text-lg font-medium text-blue-600 mb-3">{{ cap.question }}</h4>
+                <div class="bg-gray-50 p-4 rounded-md border border-gray-200 mb-4">
+                    <pre class="whitespace-pre-wrap text-sm text-gray-800 font-mono">{{ cap.answer }}</pre>
                 </div>
-                <div class="card-body">
-                    <h5 class="card-title text-primary">{{ cap.question }}</h5>
-                    <div class="card-text bg-light p-3 border rounded mb-3">
-                        <pre style="white-space: pre-wrap; margin-bottom: 0;">{{ cap.answer }}</pre>
-                    </div>
 
-                    {% if cap.all_examples|length > 1 %}
-                    <small class="text-muted">
-                        <strong>Other ways to ask:</strong>
-                        <ul>
-                            {% for ex in cap.all_examples %}
-                                {% if ex != cap.question %}
-                                    <li>{{ ex }}</li>
-                                {% endif %}
-                            {% endfor %}
-                        </ul>
-                    </small>
-                    {% endif %}
+                {% if cap.all_examples|length > 1 %}
+                <div class="text-sm text-gray-500">
+                    <strong>Other ways to ask:</strong>
+                    <ul class="list-disc list-inside mt-1 ml-2">
+                        {% for ex in cap.all_examples %}
+                            {% if ex != cap.question %}
+                                <li>{{ ex }}</li>
+                            {% endif %}
+                        {% endfor %}
+                    </ul>
                 </div>
+                {% endif %}
             </div>
         </div>
         {% empty %}
-        <div class="col-12">
-            <div class="alert alert-info">
-                No capabilities defined yet. Run <code>python manage.py setup_data</code> to seed the system.
+        <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <!-- Heroicon name: solid/information-circle -->
+                    <svg class="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <p class="text-sm text-blue-700">
+                        No capabilities defined yet. Run <code>python manage.py setup_data</code> to seed the system.
+                    </p>
+                </div>
             </div>
         </div>
         {% endfor %}
