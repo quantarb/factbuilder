@@ -131,9 +131,9 @@ This audit trail is critical for trust, debugging, and iterative improvement.
 graph TD
     User --> QA_Engine[QA Engine]
     QA_Engine --> Fact_Registry[Fact Registry / Taxonomy]
-    Fact_Registry --> Fact_Producers[Fact Producers (Deterministic Computation)]
-    Fact_Producers --> Finance_Models[Finance Models (Level 0/1)]
-    Fact_Producers --> Frugal_Models[Frugal Models (Level 2+)]
+    Fact_Registry --> Fact_Producers[Fact Producers]
+    Fact_Producers --> Finance_Models[Finance Models Level 0/1]
+    Fact_Producers --> Frugal_Models[Frugal Models Level 2+]
     
     LLM_Agent[LLM-Assisted Coding Agent] -->|Proposes / Extends Facts| Fact_Registry
 ```
