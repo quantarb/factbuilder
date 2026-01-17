@@ -3,6 +3,7 @@ from facts.models import FactDefinitionVersion
 from facts.engine import QAEngine
 import json
 import sys
+from typing import Any, Dict, List, Optional
 
 # Try to import jsonpath_ng, but don't fail if missing
 try:
@@ -14,7 +15,7 @@ except ImportError:
 class Command(BaseCommand):
     help = 'Runs all test cases defined in approved FactDefinitionVersions'
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         engine = QAEngine()
         versions = FactDefinitionVersion.objects.filter(status='approved')
         
@@ -75,7 +76,11 @@ class Command(BaseCommand):
         if failed > 0:
             sys.exit(1)
 
-    def _check_match(self, expected, actual):
+    def _check_match(self, expected: Any, actual: Any) -> bool:
+        """
+        Checks if the actual result matches the expected result.
+        Supports exact match, JSONPath, and subset match for dicts.
+        """
         # 1. Exact match
         if expected == actual:
             return True

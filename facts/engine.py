@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from .taxonomy import build_taxonomy, resolve_fact, FactStore
 from .models import Question, Answer, FactInstance
 from .context import normalize_context
@@ -15,12 +15,26 @@ except ImportError:
     TaxonomyProposal = None
 
 class QAEngine:
-    def __init__(self):
+    """
+    Engine for answering questions by routing them to the appropriate fact definition
+    and executing the logic to compute the answer.
+    """
+    def __init__(self) -> None:
         self.registry = build_taxonomy()
         self.router = IntentRouter()
         self.llm_service = LLMService() if LLMService else None
         
-    def answer_question(self, question_text: str, user=None) -> Dict[str, Any]:
+    def answer_question(self, question_text: str, user: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Main entry point to answer a question.
+        
+        Args:
+            question_text: The text of the question.
+            user: The user asking the question (optional).
+            
+        Returns:
+            A dictionary containing the answer text and optional metadata.
+        """
         question_obj = Question.objects.create(text=question_text, user=user)
         
         # 1. Deterministic Routing
@@ -58,7 +72,11 @@ class QAEngine:
             traceback.print_exc()
             return {"text": f"Error calculating answer: {str(e)}"}
 
-    def _handle_unrecognized_intent(self, question_obj, text):
+    def _handle_unrecognized_intent(self, question_obj: Question, text: str) -> Dict[str, Any]:
+        """
+        Handles cases where the intent is not recognized by analyzing the question
+        with an LLM to potentially propose a new fact.
+        """
         # We no longer pass a hardcoded schema string. 
         # The LLMService now fetches the dynamic schema internally.
         analysis = self.llm_service.analyze_unanswerable_question(text, available_schema=None)
@@ -92,7 +110,10 @@ class QAEngine:
             reason = analysis.get("reason", "I'm sorry, I don't have the data to answer that question.")
             return {"text": reason}
 
-    def _parse_intent_llm(self, text: str) -> tuple[Optional[str], Dict[str, Any]]:
+    def _parse_intent_llm(self, text: str) -> Tuple[Optional[str], Dict[str, Any]]:
+        """
+        Uses LLM to classify the intent of the question and extract context.
+        """
         # Pass full spec info including schema to LLM
         available_facts = []
         for fact_id, spec in self.registry.all_specs().items():
@@ -114,6 +135,9 @@ class QAEngine:
         return intent, context
 
     def _format_answer(self, fact_id: str, value: Any, context: Dict[str, Any]) -> str:
+        """
+        Formats the answer based on the fact's output template or default formatting.
+        """
         # 1. Try to use the Jinja2 template if available
         spec = self.registry.spec(fact_id)
         if spec and spec.output_template:
@@ -150,7 +174,10 @@ class QAEngine:
             
         return str(value)
 
-    def _save_interaction(self, question_obj, fact_instance, answer_text):
+    def _save_interaction(self, question_obj: Question, fact_instance: FactInstance, answer_text: str) -> None:
+        """
+        Saves the answer and links it to the question and the fact instance used.
+        """
         answer_obj = Answer.objects.create(
             question=question_obj,
             text=answer_text

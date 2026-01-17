@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Literal
+from typing import Any, Callable, Dict, List, Optional, Literal, Union
 import pandas as pd
 from datetime import date, datetime, timedelta
 import hashlib
@@ -42,23 +42,23 @@ class FactSpec:
     version_obj: Optional[FactDefinitionVersion] = None # Link to DB version
 
 class FactRegistry:
-    def __init__(self):
+    def __init__(self) -> None:
         self._specs: Dict[str, FactSpec] = {}
 
-    def register(self, spec: FactSpec):
+    def register(self, spec: FactSpec) -> None:
         self._specs[spec.id] = spec
 
-    def spec(self, fact_id: str) -> FactSpec:
+    def spec(self, fact_id: str) -> Optional[FactSpec]:
         return self._specs.get(fact_id)
 
     def all_specs(self) -> Dict[str, FactSpec]:
         return self._specs
 
 class FactStore:
-    def __init__(self):
+    def __init__(self) -> None:
         self._instances: Dict[str, FactInstance] = {}
 
-    def set(self, fact_id: str, instance: FactInstance):
+    def set(self, fact_id: str, instance: FactInstance) -> None:
         self._instances[fact_id] = instance
 
     def get(self, fact_id: str) -> Optional[FactInstance]:
@@ -67,7 +67,7 @@ class FactStore:
     def has(self, fact_id: str) -> bool:
         return fact_id in self._instances
 
-def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Dict[str, Any] = None) -> FactInstance:
+def resolve_fact(reg: FactRegistry, store: FactStore, fact_id: str, context: Optional[Dict[str, Any]] = None) -> FactInstance:
     if context is None:
         context = {}
         
@@ -317,14 +317,14 @@ def build_taxonomy() -> FactRegistry:
 
     return reg
 
-def create_dynamic_producer(code_str):
+def create_dynamic_producer(code_str: str) -> Callable:
     # We just return the code string or a wrapper, 
     # but for safe_execute we need the code to be executed in a restricted env.
     # Here we return a callable that safe_execute can use or inspect.
     # To keep it simple with existing structure, we'll return a wrapper that
     # executes the code. But safe_execute will handle the isolation.
     
-    def dynamic_producer(deps, context):
+    def dynamic_producer(deps: Dict[str, Any], context: Dict[str, Any]) -> Any:
         # This function body is what runs inside the safe environment
         local_scope = {}
         # Restricted globals are handled in safe_execute_worker
@@ -339,7 +339,7 @@ def create_dynamic_producer(code_str):
 
 # --- Safe Execution ---
 
-def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
+def safe_execute(producer_func: Callable, deps: Dict[str, Any], context: Dict[str, Any], logic_type: str = 'python', timeout: int = 5) -> Any:
     """
     Executes the producer directly in the current process (INSECURE for untrusted code).
     Modified to avoid multiprocessing issues during debugging.

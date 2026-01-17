@@ -1,5 +1,6 @@
 import hashlib
 import json
+from typing import Any, Dict, List, Optional, Tuple
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.serializers.json import DjangoJSONEncoder
@@ -30,7 +31,7 @@ class FactDefinition(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     history = HistoricalRecords()
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.namespace or not self.slug:
             # Auto-populate from id if missing
             parts = self.id.split('.', 1)
@@ -41,7 +42,7 @@ class FactDefinition(models.Model):
                 self.slug = self.id
         super().save(*args, **kwargs)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.id
 
 class FactDefinitionVersion(models.Model):
@@ -78,7 +79,7 @@ class FactDefinitionVersion(models.Model):
         unique_together = ('fact_definition', 'version')
         ordering = ['-version']
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.fact_definition_id} v{self.version}"
 
 class IntentRecognizer(models.Model):
@@ -92,7 +93,7 @@ class IntentRecognizer(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Recognizer for {self.fact_version}"
 
 class FactInstance(models.Model):
@@ -125,7 +126,7 @@ class FactInstance(models.Model):
         ]
         unique_together = ('fact_version', 'context_hash')
     
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.fact_version} ({self.status})"
 
 class FactInstanceDependency(models.Model):
@@ -138,7 +139,7 @@ class Question(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     
-    def __str__(self):
+    def __str__(self) -> str:
         return self.text
 
 class Answer(models.Model):
@@ -147,5 +148,5 @@ class Answer(models.Model):
     facts_used = models.ManyToManyField(FactInstance, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Answer to: {self.question.text[:50]}..."

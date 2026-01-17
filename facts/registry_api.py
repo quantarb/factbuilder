@@ -1,7 +1,8 @@
 from django.db.models import Q
 from facts.models import FactDefinition, FactDefinitionVersion, IntentRecognizer
+from typing import List, Dict, Any, Optional
 
-def list_facts(namespace: str = None):
+def list_facts(namespace: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Lists facts, optionally filtered by namespace.
     """
@@ -10,7 +11,7 @@ def list_facts(namespace: str = None):
         qs = qs.filter(namespace=namespace)
     return list(qs.values('id', 'description', 'namespace', 'slug'))
 
-def search_facts(query: str):
+def search_facts(query: str) -> List[Dict[str, Any]]:
     """
     Searches facts by keyword over name, description, and recognizer examples.
     """
@@ -29,4 +30,4 @@ def search_facts(query: str):
     # Combine results
     all_ids = set(def_matches) | set(rec_matches)
     
-    return FactDefinition.objects.filter(id__in=all_ids).values('id', 'description', 'namespace')
+    return list(FactDefinition.objects.filter(id__in=all_ids).values('id', 'description', 'namespace'))

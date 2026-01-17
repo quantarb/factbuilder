@@ -6,7 +6,13 @@ from django.core.management import call_command
 from datetime import date
 
 class Level0Tests(TestCase):
-    def setUp(self):
+    """
+    Tests for Level 0 facts (basic account balances).
+    """
+    def setUp(self) -> None:
+        """
+        Set up test data including user, accounts, and transactions.
+        """
         # 1. Setup Data (Intents & Facts)
         # We run the command to populate the DB with the Level 0 facts and intents
         call_command('setup_data')
@@ -47,7 +53,7 @@ class Level0Tests(TestCase):
         # Initialize Engine (which loads intents)
         self.engine = QAEngine()
 
-    def test_cash_balance_question(self):
+    def test_cash_balance_question(self) -> None:
         """
         Q1: What is my current cash balance?
         Should return sum of 950.00 + 500.00 = 1450.00
@@ -59,7 +65,7 @@ class Level0Tests(TestCase):
         # We check for the number in the response text.
         self.assertTrue("1450" in response['text'] or "1,450" in response['text'])
         
-    def test_provenance_question(self):
+    def test_provenance_question(self) -> None:
         """
         Q2: Where did this number come from?
         Should return breakdown.
@@ -75,4 +81,3 @@ class Level0Tests(TestCase):
         self.assertIn("Chase Credit Card", text)
         self.assertTrue("500" in text)
         self.assertIn("Latest Acc2", text)
-```

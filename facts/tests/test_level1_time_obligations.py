@@ -5,9 +5,16 @@ from facts.engine import QAEngine
 from facts.models import FactDefinition, FactDefinitionVersion, IntentRecognizer, FactInstance
 from decimal import Decimal
 from datetime import date, timedelta, datetime
+from typing import List, Optional
 
 class Level1TimeObligationsTest(TestCase):
-    def setUp(self):
+    """
+    Tests for Level 1 facts involving time-based logic and obligations.
+    """
+    def setUp(self) -> None:
+        """
+        Set up user, account, transactions, and facts for testing.
+        """
         self.user = User.objects.create_user(username='testuser', password='password')
         self.acc = Account.objects.create(name='Checking', user=self.user)
         self.engine = QAEngine()
@@ -84,7 +91,10 @@ class Level1TimeObligationsTest(TestCase):
             balance=900.00
         )
 
-    def setup_level1_facts(self):
+    def setup_level1_facts(self) -> None:
+        """
+        Define and register Level 1 facts for testing.
+        """
         # This mirrors what we will put in setup_data.py
         # We define it here to make the test self-contained or we can import from setup_data if we refactor.
         # For now, I'll define the minimal versions needed for the test to pass, 
@@ -233,7 +243,10 @@ return {
                           requires=['money.obligations_due_before_paycheck'])
 
 
-    def _create_fact(self, id, code, regexes, keywords, requires=None):
+    def _create_fact(self, id: str, code: str, regexes: List[str], keywords: List[str], requires: Optional[List[str]] = None) -> None:
+        """
+        Helper to create a fact definition and version.
+        """
         defn, _ = FactDefinition.objects.get_or_create(
             id=id,
             defaults={'description': 'Test Fact', 'data_type': 'dict'}
@@ -252,13 +265,19 @@ return {
             defaults={'regex_patterns': regexes, 'keywords': keywords}
         )
 
-    def test_balance_yesterday(self):
+    def test_balance_yesterday(self) -> None:
+        """
+        Test querying balance for yesterday.
+        """
         q = "What was my balance yesterday?"
         resp = self.engine.answer_question(q, user=self.user)
         # Yesterday balance should be 900.00
         self.assertIn("900.0", resp['text'])
 
-    def test_bills_due_before_paycheck(self):
+    def test_bills_due_before_paycheck(self) -> None:
+        """
+        Test querying bills due before the next paycheck.
+        """
         q = "What bills are due before my next paycheck?"
         resp = self.engine.answer_question(q, user=self.user)
         
@@ -269,7 +288,10 @@ return {
         self.assertIn("Rent", resp['text'])
         self.assertNotIn("Electric", resp['text'])
 
-    def test_spoken_for(self):
+    def test_spoken_for(self) -> None:
+        """
+        Test querying the total amount of money "spoken for" (committed to bills).
+        """
         q = "How much money is already spoken for?"
         resp = self.engine.answer_question(q, user=self.user)
         

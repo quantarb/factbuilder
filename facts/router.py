@@ -10,12 +10,15 @@ except ImportError:
     process = None
 
 class IntentRouter:
-    def __init__(self):
+    """
+    Routes user questions to the appropriate fact definition version based on intent recognition.
+    """
+    def __init__(self) -> None:
         self._regex_cache = {}
         self._keyword_cache = {}
         self._load_recognizers()
 
-    def _load_recognizers(self):
+    def _load_recognizers(self) -> None:
         """
         Loads all active recognizers into memory.
         In a production app, this should be cached and invalidated on updates.
@@ -81,5 +84,8 @@ class IntentRouter:
 
         return None, {}
 
-    def refresh(self):
+    def refresh(self) -> None:
+        """
+        Reloads recognizers from the database.
+        """
         self._load_recognizers()

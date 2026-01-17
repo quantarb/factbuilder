@@ -5,9 +5,16 @@ from facts.engine import QAEngine
 from facts.models import FactDefinition, FactDefinitionVersion, IntentRecognizer, FactInstance
 from decimal import Decimal
 from datetime import date, timedelta
+from typing import List
 
 class Level0TrustGroundTruthTest(TestCase):
-    def setUp(self):
+    """
+    Tests for Level 0 facts ensuring ground truth accuracy for account balances.
+    """
+    def setUp(self) -> None:
+        """
+        Set up user, accounts, transactions, and facts for testing.
+        """
         # 1. Create User
         self.user = User.objects.create_user(username='testuser', password='password')
         
@@ -62,7 +69,10 @@ class Level0TrustGroundTruthTest(TestCase):
         
         self.engine = QAEngine()
 
-    def setup_level0_facts(self):
+    def setup_level0_facts(self) -> None:
+        """
+        Define and register Level 0 facts for testing.
+        """
         # 1. money.cash_balance
         cash_balance_code = """
 user = context.get('user')
@@ -143,7 +153,10 @@ return {
             keywords=["provenance", "breakdown", "source"]
         )
 
-    def _create_fact_with_intent(self, id, desc, code, data_type, regex_patterns, keywords):
+    def _create_fact_with_intent(self, id: str, desc: str, code: str, data_type: str, regex_patterns: List[str], keywords: List[str]) -> None:
+        """
+        Helper to create a fact definition and version with intent.
+        """
         defn, _ = FactDefinition.objects.get_or_create(
             id=id,
             defaults={'description': desc, 'data_type': data_type}
@@ -160,7 +173,7 @@ return {
             defaults={'regex_patterns': regex_patterns, 'keywords': keywords}
         )
 
-    def test_q1_cash_balance(self):
+    def test_q1_cash_balance(self) -> None:
         """Test 'What is my current cash balance?'"""
         question = "What is my current cash balance?"
         response = self.engine.answer_question(question, user=self.user)
@@ -188,7 +201,7 @@ return {
         self.assertEqual(instance.value['cash_balance'], expected_total)
         self.assertEqual(instance.value['currency'], 'USD')
 
-    def test_q2_breakdown(self):
+    def test_q2_breakdown(self) -> None:
         """Test 'Where did this number come from?'"""
         question = "Where did this number come from?"
         response = self.engine.answer_question(question, user=self.user)

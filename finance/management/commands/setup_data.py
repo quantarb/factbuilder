@@ -1,6 +1,7 @@
 import os
 import csv
 from datetime import datetime, date, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from finance.models import Account, BankTransaction, CreditCardTransaction
@@ -13,7 +14,7 @@ from decimal import Decimal
 class Command(BaseCommand):
     help = 'Sets up initial data: users, accounts, transactions, and facts.'
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         admin_user = self.create_superuser()
         bank_account, credit_card_account = self.create_accounts(admin_user)
         
@@ -36,7 +37,7 @@ class Command(BaseCommand):
         self.setup_level1_facts()
         self.run_initial_questions(admin_user)
 
-    def create_superuser(self):
+    def create_superuser(self) -> User:
         user, created = User.objects.get_or_create(username='admin', defaults={'email': 'admin@example.com'})
         if created:
             user.set_password('admin123')
@@ -48,7 +49,7 @@ class Command(BaseCommand):
             self.stdout.write("Superuser 'admin' already exists.")
         return user
 
-    def create_accounts(self, user):
+    def create_accounts(self, user: User) -> Tuple[Account, Account]:
         bank_account, created = Account.objects.get_or_create(name='Chase Checking', defaults={'user': user})
         if created:
             self.stdout.write(f"Account '{bank_account.name}' created.")
@@ -69,7 +70,7 @@ class Command(BaseCommand):
         
         return bank_account, credit_card_account
 
-    def import_bank_transactions(self, account, csv_path):
+    def import_bank_transactions(self, account: Account, csv_path: str) -> None:
         if BankTransaction.objects.filter(account=account).exists():
             self.stdout.write(f"Bank transactions for {account.name} already exist. Skipping import.")
             return
@@ -101,7 +102,7 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.ERROR(f"Error processing row {row}: {e}"))
             self.stdout.write(self.style.SUCCESS(f"Imported {count} bank transactions."))
 
-    def import_credit_card_transactions(self, account, csv_path):
+    def import_credit_card_transactions(self, account: Account, csv_path: str) -> None:
         if CreditCardTransaction.objects.filter(account=account).exists():
             self.stdout.write(f"Credit card transactions for {account.name} already exist. Skipping import.")
             return
@@ -134,7 +135,7 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.ERROR(f"Error processing row {row}: {e}"))
             self.stdout.write(self.style.SUCCESS(f"Imported {count} credit card transactions."))
 
-    def setup_initial_facts(self):
+    def setup_initial_facts(self) -> None:
         self.stdout.write("Setting up initial dynamic facts...")
         
         facts = [
@@ -255,7 +256,7 @@ return abs(spent)
 
         self.stdout.write(self.style.SUCCESS(f"Ensured {len(facts)} initial facts exist."))
 
-    def setup_level0_facts(self):
+    def setup_level0_facts(self) -> None:
         self.stdout.write("Setting up Level 0 Facts & Intents...")
 
         # 1. money.cash_balance
@@ -338,7 +339,7 @@ return {
             keywords=["provenance", "breakdown", "source"]
         )
 
-    def setup_level1_facts(self):
+    def setup_level1_facts(self) -> None:
         self.stdout.write("Setting up Level 1 Facts & Intents...")
 
         # 1. money.balance_at_date
@@ -663,7 +664,7 @@ return "This question cannot be answered yet because merchant information does n
             keywords=["merchant", "amazon", "starbucks", "spend at"]
         )
 
-    def _create_fact_with_intent(self, id, desc, code, data_type, regex_patterns, keywords, requires=None):
+    def _create_fact_with_intent(self, id: str, desc: str, code: str, data_type: str, regex_patterns: List[str], keywords: List[str], requires: Optional[List[str]] = None) -> None:
         defn, _ = FactDefinition.objects.get_or_create(
             id=id,
             defaults={'description': desc, 'data_type': data_type}
@@ -685,7 +686,7 @@ return "This question cannot be answered yet because merchant information does n
             defaults={'regex_patterns': regex_patterns, 'keywords': keywords}
         )
 
-    def run_initial_questions(self, user):
+    def run_initial_questions(self, user: User) -> None:
         self.stdout.write("\n--- Running Initial QA to Build Taxonomy Facts ---")
         engine = QAEngine()
         

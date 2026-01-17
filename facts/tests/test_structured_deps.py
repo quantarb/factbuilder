@@ -3,7 +3,13 @@ from facts.models import FactDefinition, FactDefinitionVersion
 from facts.taxonomy import build_taxonomy, resolve_fact, FactStore
 
 class StructuredDependencyTests(TestCase):
-    def setUp(self):
+    """
+    Tests for structured dependencies with parameter mapping.
+    """
+    def setUp(self) -> None:
+        """
+        Set up facts with structured dependencies and parameter mapping.
+        """
         # Fact B takes a parameter 'x'
         self.fact_b = FactDefinition.objects.create(id="fact.b", data_type="scalar")
         self.ver_b = FactDefinitionVersion.objects.create(
@@ -29,7 +35,10 @@ class StructuredDependencyTests(TestCase):
         self.registry = build_taxonomy()
         self.store = FactStore()
 
-    def test_param_mapping(self):
+    def test_param_mapping(self) -> None:
+        """
+        Test that parameters are correctly mapped from parent context to dependency context.
+        """
         # Call A with val=5. Should call B with x=5.
         instance_a = resolve_fact(self.registry, self.store, "fact.a", {"val": 5})
         
