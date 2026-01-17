@@ -36,31 +36,18 @@ No higher-level concept is assumed until the system has enough evidence to justi
 
 ## The Question Ladder (North Star)
 
-See [QUESTIONS.md](QUESTIONS.md) for the detailed hierarchy.
+The core philosophy of FactBuilder is the **Question Ladder**, which defines the hierarchy of financial intelligence.
 
-### Level 0 — Trust & Ground Truth (Point-in-Time)
-“What is true right now, and why?”
+👉 **[See QUESTIONS.md for the detailed hierarchy and example questions.](QUESTIONS.md)**
 
-### Level 1 — Parameterized Ground Truth (Transactions + Filters)
-“What was true when, where, or for which slice?”
-
-### Level 2 — Inferred Structure (Patterns from Transactions)
-“What appears to be true repeatedly?”
-
-### Level 3 — Available-to-Spend (MVP Boundary)
-“Given what’s known and inferred, what is safe to spend?”
-
-### Level 4 — Spending Context
-“How does my current behavior compare to my past?”
-
-### Level 5 — Counterfactuals
-“What if I make a different choice?”
-
-### Level 6 — Risk & Regret
-“What could go wrong, and where is uncertainty concentrated?”
-
-### Level 7 — Frugal Decision
-“Given everything you know and don’t know, what should I do?”
+*   **Level 0**: Ground Truth (The "What")
+*   **Level 1**: Parameterized Truth (The "What if I slice it?")
+*   **Level 2**: Inferred Structure (The "What is recurring?")
+*   **Level 3**: Available-to-Spend (The "What is truly mine?")
+*   **Level 4**: Context (The "Is this normal?")
+*   **Level 5**: Counterfactuals (The "What if?")
+*   **Level 6**: Risk & Regret (The "Should I?")
+*   **Level 7**: Frugal Decision (The "Action")
 
 ## Core Functionality
 
@@ -76,6 +63,8 @@ Data is imported from CSV files into a relational database via:
 python manage.py setup_data
 ```
 
+👉 **See [finance/README.md](finance/README.md) for details on the data models.**
+
 ### 2. Fact Taxonomy Engine
 The Fact Taxonomy is the deterministic reasoning layer.
 Facts are explicit, versioned computations. Each fact declares:
@@ -83,18 +72,17 @@ Facts are explicit, versioned computations. Each fact declares:
 * parameters
 * outputs
 
-Facts form a directed acyclic dependency graph. Examples:
-* `money.reserved` → depends on upcoming bills
-* `money.available` → depends on balances and reserves
-* `risk.delta($X)` → depends on available-to-spend and obligations
+Facts form a directed acyclic dependency graph. The taxonomy ensures that complex questions can be answered by composing simpler, defensible facts.
 
-The taxonomy ensures that complex questions can be answered by composing simpler, defensible facts.
+👉 **See [facts/README.md](facts/README.md) for details on the engine and taxonomy.**
 
 ### 3. Frugal Inference & Decision Layer
 The `frugal` app manages the transition from raw data to structural knowledge.
 * **Inference**: Detects recurring patterns (`RecurrenceCandidate`) from transactions.
 * **Confirmation**: Users validate candidates to create confirmed facts (`RecurringExpense`).
 * **Policy**: Defines "Available-to-Spend" logic via `ReservePolicy`.
+
+👉 **See [frugal/README.md](frugal/README.md) for details on inference and decision models.**
 
 ### 4. LLM-Assisted Coding Agent (Capacity Builder)
 FactBuilder includes an LLM-assisted coding agent whose sole responsibility is to expand the fact taxonomy, not to answer user questions directly.
