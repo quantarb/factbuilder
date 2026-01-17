@@ -12,6 +12,20 @@ function App() {
 
     useEffect(() => {
         fetchConversations();
+
+        // Check for query param 'q' to auto-send message
+        const params = new URLSearchParams(window.location.search);
+        const initialQuestion = params.get('q');
+        if (initialQuestion) {
+            // Clear the query param so it doesn't re-trigger on refresh
+            window.history.replaceState({}, document.title, window.location.pathname);
+            // We need to wait a bit or handle this carefully to ensure state is ready
+            // But since handleSendMessage is async and depends on state, we can just call it
+            // However, we need to set input text first or pass it directly.
+            // Let's pass it directly to a modified send function or just set it and trigger.
+            // Better: modify handleSendMessage to accept optional text
+            handleSendMessage(initialQuestion);
+        }
     }, []);
 
     useEffect(() => {
@@ -62,14 +76,24 @@ function App() {
         setGraphDot(text);
     };
 
-    const handleSendMessage = async () => {
-        if (!inputText.trim()) return;
+    const handleSendMessage = async (textOverride = null) => {
+        const text = textOverride || inputText;
+        if (!text || !text.trim()) return;
         
-        const text = inputText;
-        setInputText("");
+        if (!textOverride) {
+            setInputText("");
+        }
         setLoading(true);
 
         // Optimistic update
+        // Note: if we are starting a new conversation (currentConversationId is null),
+        // we might want to clear previous messages if any (though usually empty).
+        // If we are in an existing conversation, we append.
+
+        // If textOverride is present (from URL), we might be starting fresh or not.
+        // For simplicity, if textOverride is used, we assume we want to send it to the current context
+        // or a new one if none selected.
+
         const tempMessages = [...messages, { sender: 'user', text: text }];
         setMessages(tempMessages);
 
@@ -99,7 +123,19 @@ function App() {
             
             // Update with actual response
             // data.bot_message now includes proposal_id if applicable
-            setMessages([...tempMessages, data.bot_message]);
+            // We need to be careful not to duplicate if we re-render or something,
+            // but here we are just appending to state.
+            // However, since we used tempMessages based on 'messages' state,
+            // and 'messages' state might have changed if we were fetching in background (unlikely here),
+            // it's safer to use functional update, but we need the bot message to follow the user message.
+
+            setMessages(prev => {
+                // We need to ensure we don't lose the user message we just added optimistically
+                // But since we setMessages(tempMessages) before await, 'prev' here will be tempMessages
+                // (unless other updates happened).
+                // Actually, it's better to just append the bot message to the current state.
+                return [...prev, data.bot_message];
+            });
             
         } catch (err) {
             console.error("Error sending message:", err);
@@ -252,7 +288,7 @@ function App() {
                             className="flex-1 border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
                         />
                         <button 
-                            onClick={handleSendMessage}
+                            onClick={() => handleSendMessage()}
                             disabled={!inputText.trim() || loading}
                             className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold py-2 px-6 rounded-lg shadow transition"
                         >

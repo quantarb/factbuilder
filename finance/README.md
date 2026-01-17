@@ -1,6 +1,11 @@
-# Finance App
+# Finance App (Level 0-1)
 
-The `finance` app manages the domain-specific data models for financial information. It serves as a data source for the facts engine.
+The `finance` app manages the domain-specific data models for **Ground Truth** financial information. It serves as the foundational data source for the facts engine.
+
+## Role in Knowledge Ladder
+
+*   **Level 0 (Ground Truth)**: Stores the raw "What happened" data.
+*   **Level 1 (Parameterized)**: Supports queries that filter or aggregate this data (e.g., "Spending last month").
 
 ## Main Interfaces
 
@@ -13,4 +18,5 @@ The `finance` app manages the domain-specific data models for financial informat
 ## Contract
 
 *   **Data Storage**: This app is primarily responsible for storing raw financial data.
-*   **Integration**: The `facts` app will likely query these models to compute derived facts (e.g., total spending, monthly budget status).
+*   **No Inference**: This app does *not* guess about recurring bills or future spending. It only records what has already cleared.
+*   **Integration**: The `facts` app queries these models to compute derived facts.

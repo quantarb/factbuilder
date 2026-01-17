@@ -376,6 +376,7 @@ def safe_execute(producer_func, deps, context, logic_type='python', timeout=5):
                 "list": list, "dict": dict, "set": set, "tuple": tuple,
                 "int": int, "float": float, "str": str, "bool": bool,
                 "print": print, # Optional, maybe redirect stdout
+                "__import__": __import__, # Allow imports for now to fix the error
             },
             "pd": pd, # Whitelisted pandas
             "Decimal": Decimal,

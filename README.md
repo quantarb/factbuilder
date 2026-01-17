@@ -36,123 +36,31 @@ No higher-level concept is assumed until the system has enough evidence to justi
 
 ## The Question Ladder (North Star)
 
+See [QUESTIONS.md](QUESTIONS.md) for the detailed hierarchy.
+
 ### Level 0 — Trust & Ground Truth (Point-in-Time)
 “What is true right now, and why?”
-
-These questions establish verifiable ground truth.
-* What is my current cash balance?
-* Where did this number come from?
-
-**Characteristics:**
-* Deterministic
-* Fully explainable
-* No inference
-* No parameters (implicit “now” only)
-
-If the system cannot fully explain the answer, it must refuse to answer.
 
 ### Level 1 — Parameterized Ground Truth (Transactions + Filters)
 “What was true when, where, or for which slice?”
 
-Level 1 introduces parameters, not new concepts. These questions are answered directly from transactions using:
-* Time ranges
-* Filters
-* Simple aggregations
-
-**Examples:**
-* **Time-based:**
-    * How much did I spend yesterday?
-    * How much did I spend last week?
-    * What was my balance on January 1st?
-* **Filter-based:**
-    * How much did I spend on groceries last month?
-    * How much did I spend at Amazon in the last 90 days?
-    * How much income did I receive in the past 2 months?
-* **Combined:**
-    * How much did I spend on restaurants in the last 2 months?
-    * What were my largest expenses last week?
-
-**What Level 1 does not assume:**
-* No bills
-* No paychecks
-* No obligations
-* No recurring patterns
-* No prediction
-
-If the system only knows transactions, Level 1 is still fully answerable.
-
 ### Level 2 — Inferred Structure (Patterns from Transactions)
 “What appears to be true repeatedly?”
-
-Level 2 introduces inference. Here, the system begins proposing structure that is not explicitly stated in transactions.
-
-**Examples:**
-* What recurring bills do I appear to have based on my transactions?
-* What recurring income do I appear to have based on my transactions?
-* How confident are you in these recurring patterns?
-
-**Key properties:**
-* Answers include confidence
-* Supporting evidence is required
-* Results are hypotheses, not ground truth
-
-**Failure mode:**
-If patterns are weak or ambiguous, the system must say so.
 
 ### Level 3 — Available-to-Spend (MVP Boundary)
 “Given what’s known and inferred, what is safe to spend?”
 
-**Examples:**
-* How much money is actually available to spend right now?
-* How confident are you in that number?
-
-This level combines:
-* Ground truth (Levels 0–1)
-* Inferred structure (Level 2)
-
-Uncertainty must be explicit. If uncertainty is too high, the system should decline to give a definitive number.
-
 ### Level 4 — Spending Context
 “How does my current behavior compare to my past?”
-
-**Examples:**
-* How much have I spent so far this month?
-* Is that more or less than usual for this point in the month?
-* What category is driving the difference?
-
-These questions require:
-* Historical baselines
-* Meaningful comparisons
-* Attribution
 
 ### Level 5 — Counterfactuals
 “What if I make a different choice?”
 
-**Examples:**
-* What happens if I don’t spend anything else this month?
-* What happens if I spend $X today?
-* What changes if I wait a week?
-
-Outputs are scenarios, not predictions.
-
 ### Level 6 — Risk & Regret
 “What could go wrong, and where is uncertainty concentrated?”
 
-**Examples:**
-* Does spending $X increase my financial risk?
-* What uncertainty is this decision sensitive to?
-* What am I most likely to regret about this purchase?
-
-Risk is probabilistic and contextual.
-
-### Level 7 — Frugal Mode Decision
+### Level 7 — Frugal Decision
 “Given everything you know and don’t know, what should I do?”
-
-**Examples:**
-* Can I afford to spend $X right now without increasing my financial risk?
-* Should I do this now, wait, or not do it — and how confident are you?
-
-If earlier levels are incomplete, the system must refuse to recommend.
 
 ## Core Functionality
 
@@ -182,7 +90,13 @@ Facts form a directed acyclic dependency graph. Examples:
 
 The taxonomy ensures that complex questions can be answered by composing simpler, defensible facts.
 
-### 3. LLM-Assisted Coding Agent (Capacity Builder)
+### 3. Frugal Inference & Decision Layer
+The `frugal` app manages the transition from raw data to structural knowledge.
+* **Inference**: Detects recurring patterns (`RecurrenceCandidate`) from transactions.
+* **Confirmation**: Users validate candidates to create confirmed facts (`RecurringExpense`).
+* **Policy**: Defines "Available-to-Spend" logic via `ReservePolicy`.
+
+### 4. LLM-Assisted Coding Agent (Capacity Builder)
 FactBuilder includes an LLM-assisted coding agent whose sole responsibility is to expand the fact taxonomy, not to answer user questions directly.
 
 The agent is used to:
@@ -199,7 +113,7 @@ All LLM-generated proposals:
 
 This allows FactBuilder to grow its reasoning capacity safely over time, without embedding opaque LLM reasoning into runtime decisions.
 
-### 4. Natural Language Question Answering
+### 5. Natural Language Question Answering
 Users interact with FactBuilder using natural language, but natural language serves only as a routing and parameter-extraction layer.
 
 The QA Engine:
@@ -212,7 +126,7 @@ The QA Engine:
     * confidence
     * explicit assumptions
 
-### 5. Interaction History & Auditability
+### 6. Interaction History & Auditability
 Every question is fully auditable.
 For each interaction, FactBuilder records:
 * the user’s question
@@ -230,7 +144,8 @@ graph TD
     User --> QA_Engine[QA Engine]
     QA_Engine --> Fact_Registry[Fact Registry / Taxonomy]
     Fact_Registry --> Fact_Producers[Fact Producers (Deterministic Computation)]
-    Fact_Producers --> Finance_Models[Finance Models / Database]
+    Fact_Producers --> Finance_Models[Finance Models (Level 0/1)]
+    Fact_Producers --> Frugal_Models[Frugal Models (Level 2+)]
     
     LLM_Agent[LLM-Assisted Coding Agent] -->|Proposes / Extends Facts| Fact_Registry
 ```
